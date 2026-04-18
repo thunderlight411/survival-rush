@@ -827,6 +827,24 @@ function findBuildSpot(player, btype) {
 
 function showMsg(msg, dur = 3) { gameMsg = msg; msgTimer = dur; }
 
+function returnToLobby() {
+  cleanupFirebaseRealtime(true);
+  if (net && net.disconnect) net.disconnect();
+  gameMode = 'offline';
+  running = false;
+  winner = null;
+  sel.clear();
+  buildMode = null;
+  wallStartTile = null;
+  strikeMode = false;
+  document.getElementById('game-screen').style.display = 'none';
+  document.getElementById('lobby').style.display = 'flex';
+  document.getElementById('room-info').style.display = 'none';
+  document.getElementById('room-code-input').value = '';
+  loadMyRatingFromFirebase();
+  subscribeLeaderboard();
+}
+
 function sanitizePlayerName(raw) {
   const clean = (raw || '').replace(/[^A-Za-z0-9 _\-]/g, '').trim();
   return clean.slice(0, 16) || 'Speler';
@@ -1180,7 +1198,11 @@ function render() {
     ctx.font = 'bold 72px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(isWin ? '🏆 OVERWINNING!' : '💀 VERLOREN', W / 2, H / 2 - 24);
     ctx.fillStyle = '#ccc'; ctx.font = '22px Arial';
-    ctx.fillText('Ververs de pagina om opnieuw te spelen', W / 2, H / 2 + 30);
+    ctx.fillText('Klik op de knop om terug naar lobby te gaan', W / 2, H / 2 + 30);
+    // Draw button
+    ctx.fillStyle = '#4488ff';
+    ctx.font = 'bold 18px Arial';
+    ctx.fillText('[ TERUG NAAR LOBBY ]', W / 2, H - 40);
   }
 
   // ─ Minimap
@@ -1440,6 +1462,12 @@ function onMouseDown(e) {
   const sx = e.clientX - r.left, sy = e.clientY - r.top;
   const w  = screenToWorld(sx, sy);
   mouseWorld = w;
+
+  // Game over click to return to lobby
+  if (!running && winner !== null) {
+    returnToLobby();
+    return;
+  }
 
   if (strikeMode) {
     sendCmd({ type: 'ARTY', player: myP, x: w.x, y: w.y });
