@@ -40,6 +40,30 @@ body {
   flex-wrap: wrap;
 }
 
+#room-join-wrap {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+#room-code-input {
+  background: #12182d;
+  border: 1px solid #4e659d;
+  color: #dbe6ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  width: 150px;
+}
+
+#room-code-input::placeholder {
+  color: #8095c5;
+}
+
 .lobby-btn {
   background: #26314f;
   border: 1px solid #5f7bc0;

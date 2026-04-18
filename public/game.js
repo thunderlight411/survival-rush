@@ -1370,26 +1370,116 @@ function resizeCanvas() {
 
 // ── Network ────────────────────────────────────────────────
 let net;
+let firebaseDb = null;
+let firebaseClientId = '';
+let firebaseJoinedAt = 0;
+let firebaseRoomId = '';
+let firebasePresenceRef = null;
+let firebasePlayersRef = null;
+let firebaseCmdsRef = null;
+let firebaseOpenRef = null;
+let firebasePlayersHandler = null;
+let firebaseCmdHandler = null;
+let firebaseOpenHandler = null;
+
+function ensureFirebaseClient() {
+  if (typeof firebase === 'undefined' || !window.FIREBASE_CONFIG) return false;
+  try {
+    const cfg = window.FIREBASE_CONFIG;
+    const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(cfg);
+    firebaseDb = firebase.database(app);
+    if (!firebaseClientId) {
+      firebaseClientId = `c_${Date.now().toString(36)}_${((Math.random() * 1e6) | 0).toString(36)}`;
+      firebaseJoinedAt = Date.now();
+    }
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function cleanupFirebaseRealtime(removePresence = true) {
+  if (firebasePlayersRef && firebasePlayersHandler) {
+    firebasePlayersRef.off('value', firebasePlayersHandler);
+  }
+  if (firebaseCmdsRef && firebaseCmdHandler) {
+    firebaseCmdsRef.off('child_added', firebaseCmdHandler);
+  }
+  if (firebaseOpenRef && firebaseOpenHandler) {
+    firebaseOpenRef.off('value', firebaseOpenHandler);
+  }
+
+  if (removePresence && firebasePresenceRef) {
+    firebasePresenceRef.remove();
+  }
+  if (removePresence && firebaseOpenRef && firebaseClientId) {
+    firebaseOpenRef.child(firebaseClientId).remove();
+  }
+
+  firebaseRoomId = '';
+  firebasePresenceRef = null;
+  firebasePlayersRef = null;
+  firebaseCmdsRef = null;
+  firebaseOpenRef = null;
+  firebasePlayersHandler = null;
+  firebaseCmdHandler = null;
+  firebaseOpenHandler = null;
+}
 
 function startAIGame() {
+  cleanupFirebaseRealtime(true);
   gameMode = 'ai';
   myPending = 0;
   document.getElementById('lobby-status').textContent = 'Singleplayer vs AI wordt gestart...';
   document.getElementById('room-info').style.display = 'none';
-  if (net && net.connected) {
+  if (net && net.connected && typeof net.disconnect === 'function') {
     net.disconnect();
   }
+  net = null;
   const seed = ((Date.now() ^ (Math.random() * 1000000)) >>> 0) || 1337;
   initGame(seed, 0);
 }
 
 function initLobbyActions() {
   const aiBtn = document.getElementById('play-ai');
+  const autoBtn = document.getElementById('play-online-auto');
+  const codeBtn = document.getElementById('play-online-code');
+  const codeInput = document.getElementById('room-code-input');
+
   if (aiBtn) {
     aiBtn.onmousedown = (e) => {
       e.preventDefault();
       e.stopPropagation();
       if (!running) startAIGame();
+    };
+  }
+
+  if (autoBtn) {
+    autoBtn.onmousedown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!running) startFirebaseAutoMatch();
+    };
+  }
+
+  if (codeInput) {
+    codeInput.addEventListener('input', () => {
+      codeInput.value = sanitizeRoomCode(codeInput.value);
+    });
+    codeInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || running) return;
+      e.preventDefault();
+      startFirebaseCodeMatch(codeInput.value);
+    });
+  }
+
+  if (codeBtn) {
+    codeBtn.onmousedown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!running) {
+        startFirebaseCodeMatch(codeInput ? codeInput.value : '');
+      }
     };
   }
 }
@@ -1401,115 +1491,183 @@ function randRoomId(len = 6) {
   return out;
 }
 
-function initFirebaseNetwork() {
-  if (typeof firebase === 'undefined' || !window.FIREBASE_CONFIG) return false;
+function sanitizeRoomCode(raw) {
+  return (raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+}
 
-  try {
-    gameMode = 'online';
-    const cfg = window.FIREBASE_CONFIG;
-    const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(cfg);
-    const db = firebase.database(app);
-    const clientId = `c_${Date.now().toString(36)}_${((Math.random() * 1e6) | 0).toString(36)}`;
-    const joinedAt = Date.now();
+function makeAutoRoomId(a, b) {
+  const ids = [a, b].sort();
+  return `AUTO${ids[0].slice(-4)}${ids[1].slice(-4)}`.toUpperCase();
+}
 
-    const hashRoom = (window.location.hash || '').replace('#', '').trim();
-    const roomId = hashRoom || randRoomId(6);
-    if (!hashRoom) window.location.hash = roomId;
+function connectFirebaseRoom(roomId, waitText) {
+  if (!ensureFirebaseClient()) return false;
 
-    const roomRef = db.ref(`rooms/${roomId}`);
-    const playersRef = roomRef.child('players');
-    const cmdsRef = roomRef.child('cmds');
+  cleanupFirebaseRealtime(true);
+  gameMode = 'online';
+  firebaseRoomId = roomId;
 
-    playersRef.child(clientId).set({ joinedAt: firebase.database.ServerValue.TIMESTAMP });
-    playersRef.child(clientId).onDisconnect().remove();
+  const roomRef = firebaseDb.ref(`rooms/${roomId}`);
+  firebasePlayersRef = roomRef.child('players');
+  firebaseCmdsRef = roomRef.child('cmds');
+  firebasePresenceRef = firebasePlayersRef.child(firebaseClientId);
 
-    roomRef.child('seed').transaction(cur => cur || (((Date.now() ^ (Math.random() * 1000000)) >>> 0) || 1337));
+  firebasePresenceRef.set({ joinedAt: firebase.database.ServerValue.TIMESTAMP });
+  firebasePresenceRef.onDisconnect().remove();
 
-    net = {
-      connected: true,
-      emit(event, payload) {
-        if (event !== 'cmd') return;
-        cmdsRef.push({
-          from: clientId,
-          cmd: payload,
-          ts: firebase.database.ServerValue.TIMESTAMP,
-        });
-      },
-      disconnect() {
-        this.connected = false;
-        playersRef.child(clientId).remove();
-      },
-    };
+  roomRef.child('seed').transaction(cur => cur || (((Date.now() ^ (Math.random() * 1000000)) >>> 0) || 1337));
 
-    let started = false;
-    playersRef.on('value', snap => {
-      if (gameMode !== 'online') return;
-      const players = snap.val() || {};
-      const ids = Object.keys(players)
-        .sort((a, b) => (players[a].joinedAt || 0) - (players[b].joinedAt || 0));
-      const idx = ids.indexOf(clientId);
+  net = {
+    connected: true,
+    emit(event, payload) {
+      if (event !== 'cmd') return;
+      firebaseCmdsRef.push({
+        from: firebaseClientId,
+        cmd: payload,
+        ts: firebase.database.ServerValue.TIMESTAMP,
+      });
+    },
+    disconnect() {
+      this.connected = false;
+      cleanupFirebaseRealtime(true);
+    },
+  };
 
-      document.getElementById('room-id').textContent = roomId;
-      document.getElementById('room-info').style.display = 'block';
+  let started = false;
 
-      if (idx === -1) {
-        document.getElementById('lobby-status').textContent = 'Verbinding met room is verbroken.';
-        return;
-      }
+  firebasePlayersHandler = (snap) => {
+    if (gameMode !== 'online') return;
+    const players = snap.val() || {};
+    const ids = Object.keys(players)
+      .sort((a, b) => (players[a].joinedAt || 0) - (players[b].joinedAt || 0));
+    const idx = ids.indexOf(firebaseClientId);
 
-      if (idx > 1) {
-        document.getElementById('lobby-status').textContent = 'Kamer is vol. Open een nieuwe link.';
-        document.getElementById('waiting-msg').textContent = 'Deze room ondersteunt maximaal 2 spelers.';
-        return;
-      }
+    document.getElementById('room-id').textContent = roomId;
+    document.getElementById('room-info').style.display = 'block';
 
-      myPending = idx;
-      document.getElementById('lobby-status').textContent =
-        `Verbonden (serverloos)! Jij speelt als ${P_NAME[idx]}.`;
+    if (idx === -1) {
+      document.getElementById('lobby-status').textContent = 'Verbinding met room is verbroken.';
+      return;
+    }
 
-      if (ids.length < 2) {
-        document.getElementById('waiting-msg').textContent =
-          'Wachten op tegenstander… Deel deze URL met een vriend.';
-        return;
-      }
+    if (idx > 1) {
+      document.getElementById('lobby-status').textContent = 'Kamer is vol. Gebruik een andere code.';
+      document.getElementById('waiting-msg').textContent = 'Deze room ondersteunt maximaal 2 spelers.';
+      return;
+    }
 
-      document.getElementById('waiting-msg').textContent = 'Tegenstander gevonden! Spel start…';
+    myPending = idx;
+    document.getElementById('lobby-status').textContent =
+      `Verbonden (serverloos)! Jij speelt als ${P_NAME[idx]}.`;
 
-      if (!started && !running) {
-        started = true;
-        roomRef.child('seed').once('value').then(seedSnap => {
-          if (gameMode !== 'online' || running) return;
-          const seed = seedSnap.val() || 1337;
-          initGame(seed, myPending);
-        });
-      }
-
-      if (running && ids.length < 2) {
+    if (ids.length < 2) {
+      if (running) {
         showMsg('De tegenstander heeft de verbinding verbroken.', 10);
         winner = myP;
         running = false;
+      } else {
+        document.getElementById('waiting-msg').textContent = waitText;
       }
-    });
+      return;
+    }
 
-    cmdsRef.on('child_added', snap => {
-      if (gameMode !== 'online') return;
-      const data = snap.val();
-      if (!data || data.from === clientId || !data.cmd) return;
-      if (data.ts && data.ts + 1500 < joinedAt) return;
-      execCmd(data.cmd);
-    });
+    document.getElementById('waiting-msg').textContent = 'Tegenstander gevonden! Spel start…';
 
-    return true;
-  } catch (_err) {
-    return false;
+    if (!started && !running) {
+      started = true;
+      roomRef.child('seed').once('value').then(seedSnap => {
+        if (gameMode !== 'online' || running) return;
+        const seed = seedSnap.val() || 1337;
+        initGame(seed, myPending);
+      });
+    }
+  };
+  firebasePlayersRef.on('value', firebasePlayersHandler);
+
+  firebaseCmdHandler = (snap) => {
+    if (gameMode !== 'online') return;
+    const data = snap.val();
+    if (!data || data.from === firebaseClientId || !data.cmd) return;
+    if (data.ts && data.ts + 1500 < firebaseJoinedAt) return;
+    execCmd(data.cmd);
+  };
+  firebaseCmdsRef.on('child_added', firebaseCmdHandler);
+
+  return true;
+}
+
+function startFirebaseAutoMatch() {
+  if (!ensureFirebaseClient()) {
+    document.getElementById('lobby-status').textContent =
+      'Firebase config ontbreekt. Vul public/firebase-config.js in of speel tegen AI.';
+    return;
   }
+
+  cleanupFirebaseRealtime(true);
+  gameMode = 'online';
+  document.getElementById('room-info').style.display = 'none';
+  document.getElementById('lobby-status').textContent = 'Automatch zoekt een tegenstander…';
+  window.location.hash = '';
+
+  firebaseOpenRef = firebaseDb.ref('matchmaking/open');
+  firebaseOpenRef.child(firebaseClientId).set({ joinedAt: firebase.database.ServerValue.TIMESTAMP });
+  firebaseOpenRef.child(firebaseClientId).onDisconnect().remove();
+
+  firebaseOpenHandler = (snap) => {
+    if (gameMode !== 'online' || running || firebaseRoomId) return;
+    const waiting = snap.val() || {};
+    const oppIds = Object.keys(waiting)
+      .filter(id => id !== firebaseClientId)
+      .sort((a, b) => (waiting[a].joinedAt || 0) - (waiting[b].joinedAt || 0));
+
+    if (!oppIds.length) return;
+
+    const roomId = makeAutoRoomId(firebaseClientId, oppIds[0]);
+    firebaseOpenRef.off('value', firebaseOpenHandler);
+    firebaseOpenHandler = null;
+    firebaseOpenRef.child(firebaseClientId).remove();
+    firebaseOpenRef.child(oppIds[0]).remove();
+    window.location.hash = roomId;
+    connectFirebaseRoom(roomId, 'Automatch actief… wacht op synchronisatie.');
+  };
+
+  firebaseOpenRef.on('value', firebaseOpenHandler);
+}
+
+function startFirebaseCodeMatch(inputCode) {
+  if (!ensureFirebaseClient()) {
+    document.getElementById('lobby-status').textContent =
+      'Firebase config ontbreekt. Vul public/firebase-config.js in of speel tegen AI.';
+    return;
+  }
+
+  const roomId = sanitizeRoomCode(inputCode) || randRoomId(6);
+  const codeInput = document.getElementById('room-code-input');
+  if (codeInput) codeInput.value = roomId;
+  window.location.hash = roomId;
+
+  connectFirebaseRoom(roomId, 'Wachten op tegenstander met dezelfde kamercode…');
 }
 
 function initNetwork() {
-  if (initFirebaseNetwork()) return;
+  if (ensureFirebaseClient()) {
+    gameMode = 'online';
+    document.getElementById('online-badge').textContent = 'Serverloze multiplayer via Firebase';
+    document.getElementById('lobby-status').textContent =
+      'Kies: Automatisch Matchen of Join met Kamercode.';
+
+    const hashRoom = sanitizeRoomCode((window.location.hash || '').replace('#', '').trim());
+    const codeInput = document.getElementById('room-code-input');
+    if (hashRoom) {
+      if (codeInput) codeInput.value = hashRoom;
+      startFirebaseCodeMatch(hashRoom);
+    }
+    return;
+  }
 
   if (typeof io !== 'function') {
     gameMode = 'offline';
+    document.getElementById('online-badge').textContent = 'Online uitgeschakeld (geen Firebase config)';
     document.getElementById('lobby-status').textContent =
       'Online niet actief: voeg Firebase config toe in public/firebase-config.js. Gebruik intussen Speel Tegen AI.';
     document.getElementById('room-info').style.display = 'none';
