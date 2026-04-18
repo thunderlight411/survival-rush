@@ -323,19 +323,35 @@ function initGame(seed, playerIdx) {
 }
 
 function spawnStart() {
-  // Player 0 – top-left
-  const b0x = 5 * TS, b0y = 5 * TS;
-  mkEnt(0, BASE,   b0x, b0y);
-  mkEnt(0, WORKER, b0x + 3 * TS,  b0y + TS / 2);
-  mkEnt(0, WORKER, b0x + 3 * TS,  b0y + TS * 1.5);
-  mkEnt(0, WORKER, b0x + TS / 2,  b0y + 3 * TS);
+  // Four possible corner zones (tile coords for the base top-left corner)
+  const margin = 4; // tiles from edge
+  const corners = [
+    { x: margin,          y: margin },           // top-left
+    { x: MW - margin - 2, y: margin },           // top-right
+    { x: margin,          y: MH - margin - 2 },  // bottom-left
+    { x: MW - margin - 2, y: MH - margin - 2 },  // bottom-right
+  ];
 
-  // Player 1 – bottom-right (mirrored)
-  const b1x = (MW - 7) * TS, b1y = (MH - 7) * TS;
+  // Pick a random pair of diagonally opposite corners using the seeded RNG.
+  // Opposite pairs: (0,3) = TL/BR,  (1,2) = TR/BL
+  const pair = (rng() < 0.5) ? [0, 3] : [1, 2];
+  // Randomly flip which player gets which corner of the pair
+  const flip = rng() < 0.5;
+  const c0 = corners[flip ? pair[1] : pair[0]];
+  const c1 = corners[flip ? pair[0] : pair[1]];
+
+  const b0x = c0.x * TS, b0y = c0.y * TS;
+  const b1x = c1.x * TS, b1y = c1.y * TS;
+
+  mkEnt(0, BASE,   b0x, b0y);
+  mkEnt(0, WORKER, b0x + 3 * TS, b0y + TS / 2);
+  mkEnt(0, WORKER, b0x + 3 * TS, b0y + TS * 1.5);
+  mkEnt(0, WORKER, b0x + TS / 2, b0y + 3 * TS);
+
   mkEnt(1, BASE,   b1x, b1y);
-  mkEnt(1, WORKER, b1x - 2 * TS,  b1y + TS / 2);
-  mkEnt(1, WORKER, b1x - 2 * TS,  b1y + TS * 1.5);
-  mkEnt(1, WORKER, b1x + TS / 2,  b1y - 2 * TS);
+  mkEnt(1, WORKER, b1x - 2 * TS, b1y + TS / 2);
+  mkEnt(1, WORKER, b1x - 2 * TS, b1y + TS * 1.5);
+  mkEnt(1, WORKER, b1x + TS / 2, b1y - 2 * TS);
 }
 
 // ── Game loop ──────────────────────────────────────────────
