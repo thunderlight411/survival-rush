@@ -56,6 +56,8 @@ const BIOMES = [
   },
 ];
 let currentBiomeName = 'Bosland';
+const REPLAY_STORAGE_KEY = 'wg_last_replay_v1';
+const MAX_REMOTE_CMDS_PER_3S = 70;
 
 // Player colours
 const P_COLOR = ['#4488ff', '#ff4444'];
@@ -327,6 +329,13 @@ let fogEnabled = true;        // Fog of war on/off
 let fogTiles = null;          // Set of "tx,ty" strings visible to myP this frame
 let rematchRequested = false; // This client requested rematch
 let rematchListening = false; // Already listening for rematch
+let simTime = 0;
+let replayMode = false;
+let replayData = null;
+let replayCursor = 0;
+let replayRecording = null;
+let antiCheatHits = [0, 0];
+let cmdWindow = [[], []];
 
 // Camera
 let camX = 0, camY = 0;
@@ -378,8 +387,11 @@ function initGame(seed, playerIdx) {
   gameMsg = '';
   msgTimer = 0;
   lastTimestamp = 0;
+  simTime = 0;
   disconnectTimer = 0;
   disconnectingPlayer = -1;
+  antiCheatHits = [0, 0];
+  cmdWindow = [[], []];
   fogTiles = null;
   rematchRequested = false;
   rematchListening = false;
@@ -394,6 +406,22 @@ function initGame(seed, playerIdx) {
   generateMap(seed);
   spawnStart();
   showMsg(`Biome: ${currentBiomeName}`, 4);
+
+  if (!replayMode) {
+    replayRecording = {
+      version: 1,
+      seed,
+      biome: currentBiomeName,
+      mode: gameMode,
+      startedAt: Date.now(),
+      players: [
+        { slot: 0, name: firebaseRoomPlayers[0] && firebaseRoomPlayers[0].name ? firebaseRoomPlayers[0].name : P_NAME[0] },
+        { slot: 1, name: firebaseRoomPlayers[1] && firebaseRoomPlayers[1].name ? firebaseRoomPlayers[1].name : P_NAME[1] },
+      ],
+      events: [],
+      winner: null,
+    };
+  }
 
   // Focus camera on own base
   const myBase = getBase(myP);
@@ -453,6 +481,14 @@ function gameLoop(ts) {
 // ── Update ─────────────────────────────────────────────────
 function update(dt) {
   if (!running) return;
+  simTime += dt;
+
+  if (replayMode && replayData && Array.isArray(replayData.events)) {
+    while (replayCursor < replayData.events.length && replayData.events[replayCursor].t <= simTime + 0.0001) {
+      execCmd(replayData.events[replayCursor].cmd, true);
+      replayCursor++;
+    }
+  }
 
   // ─ Gold income (passive + workers + markets)
   goldTimer += dt;
@@ -639,7 +675,83 @@ function unitAtTile(tx, ty) {
 // Commands are executed locally AND sent to opponent via server.
 // Both clients run the same deterministic simulation.
 
-function execCmd(cmd) {
+function inferCmdPlayer(cmd) {
+  if (cmd && Number.isInteger(cmd.player) && (cmd.player === 0 || cmd.player === 1)) return cmd.player;
+  if (cmd && Array.isArray(cmd.ids) && cmd.ids.length > 0) {
+    const ent = ents[cmd.ids[0]];
+    if (ent) return ent.player;
+  }
+  return -1;
+}
+
+function recordReplayEvent(cmd) {
+  if (!replayRecording || replayMode) return;
+  replayRecording.events.push({
+    t: Number(simTime.toFixed(3)),
+    cmd: JSON.parse(JSON.stringify(cmd)),
+  });
+}
+
+function validateCommand(cmd, issuerPlayer) {
+  if (!cmd || typeof cmd !== 'object' || typeof cmd.type !== 'string') return false;
+
+  const inWorld = (x, y) => Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= MW * TS && y >= 0 && y <= MH * TS;
+  const validPlayer = issuerPlayer === 0 || issuerPlayer === 1;
+  if (!validPlayer) return false;
+
+  switch (cmd.type) {
+    case 'MOVE': {
+      if (!Array.isArray(cmd.ids) || cmd.ids.length < 1 || cmd.ids.length > 80) return false;
+      if (!inWorld(cmd.wx, cmd.wy)) return false;
+      return cmd.ids.every(id => ents[id] && DEF[ents[id].type].u && ents[id].player === issuerPlayer);
+    }
+    case 'ATTACK': {
+      if (!Array.isArray(cmd.ids) || cmd.ids.length < 1 || cmd.ids.length > 80) return false;
+      if (!ents[cmd.tid]) return false;
+      return cmd.ids.every(id => ents[id] && DEF[ents[id].type].u && ents[id].player === issuerPlayer);
+    }
+    case 'BUILD': {
+      if (cmd.player !== issuerPlayer) return false;
+      if (![BARRACKS, TOWER, MARKET, WALL].includes(cmd.btype)) return false;
+      if (Array.isArray(cmd.tiles)) {
+        if (cmd.tiles.length < 1 || cmd.tiles.length > 4) return false;
+        return cmd.tiles.every(t => Number.isInteger(t.tx) && Number.isInteger(t.ty) && t.tx >= 0 && t.tx < MW && t.ty >= 0 && t.ty < MH);
+      }
+      return Number.isInteger(cmd.tx) && Number.isInteger(cmd.ty) && cmd.tx >= 0 && cmd.tx < MW && cmd.ty >= 0 && cmd.ty < MH;
+    }
+    case 'TRAIN': {
+      if (cmd.player !== issuerPlayer) return false;
+      if (!ents[cmd.bid] || ents[cmd.bid].player !== issuerPlayer) return false;
+      return !!DEF[cmd.utype] && DEF[cmd.utype].u === 1;
+    }
+    case 'ARTY':
+      return cmd.player === issuerPlayer && inWorld(cmd.x, cmd.y);
+    case 'ECO_LOAN':
+    case 'ECO_UPGRADE':
+    case 'TACTIC_BOOST':
+    case 'TACTIC_MERCS':
+    case 'TACTIC_REPAIR':
+    case 'BELASTING':
+    case 'PLUNDER':
+      return cmd.player === issuerPlayer;
+    default:
+      return false;
+  }
+}
+
+function flagCheat(player, reason) {
+  if (player !== 0 && player !== 1) return;
+  antiCheatHits[player] += 1;
+  if (gameMode === 'online') {
+    showMsg(`Anti-cheat: ${P_NAME[player]} (${reason})`, 6);
+  }
+  if (antiCheatHits[player] >= 2 && running && gameMode === 'online') {
+    finalizeGame(player === 0 ? 1 : 0);
+  }
+}
+
+function execCmd(cmd, fromReplay = false) {
+  if (!fromReplay) recordReplayEvent(cmd);
   switch (cmd.type) {
 
     case 'MOVE': {
@@ -867,6 +979,12 @@ function execCmd(cmd) {
 }
 
 function sendCmd(cmd) {
+  if (replayMode) return;
+  const issuer = inferCmdPlayer(cmd) !== -1 ? inferCmdPlayer(cmd) : myP;
+  if (!validateCommand(cmd, issuer)) {
+    if (issuer === myP) showMsg('Actie geblokkeerd door anti-cheat validatie.', 3);
+    return;
+  }
   execCmd(cmd);
   if (gameMode === 'online' && net && net.connected) {
     net.emit('cmd', cmd);
@@ -1006,6 +1124,10 @@ function returnToLobby() {
   cleanupFirebaseRealtime(true);
   if (net && net.disconnect) net.disconnect();
   gameMode = 'offline';
+  replayMode = false;
+  replayData = null;
+  replayCursor = 0;
+  replayRecording = null;
   running = false;
   winner = null;
   sel.clear();
@@ -1130,6 +1252,14 @@ function finalizeGame(winnerIdx) {
   if (!running) return;
   winner = winnerIdx;
   running = false;
+  if (!replayMode && replayRecording) {
+    replayRecording.winner = winnerIdx;
+    replayRecording.duration = Number(simTime.toFixed(3));
+    replayRecording.savedAt = Date.now();
+    try {
+      localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(replayRecording));
+    } catch (_) {}
+  }
   submitOnlineMatchResult();
 }
 
@@ -1456,18 +1586,22 @@ function render() {
     if (rematchRequested) {
       ctx.fillText('Wachten op tegenstander voor rematch...', W / 2, H / 2 + 30);
     } else {
-      ctx.fillText('Kies een optie hieronder', W / 2, H / 2 + 30);
+      ctx.fillText(replayMode ? 'Replay klaar. Kies een optie hieronder' : 'Kies een optie hieronder', W / 2, H / 2 + 30);
     }
     // Rematch button (only online mode)
     if (gameMode === 'online' && !rematchRequested) {
       ctx.fillStyle = '#22aa55';
       ctx.font = 'bold 20px Arial';
-      ctx.fillText('[ REMATCH ]', W / 2 - 120, H - 40);
+      ctx.fillText('[ REMATCH ]', W / 2 - 180, H - 40);
     }
+    // Download replay button
+    ctx.fillStyle = '#ffb347';
+    ctx.font = 'bold 20px Arial';
+    ctx.fillText('[ DOWNLOAD REPLAY ]', W / 2, H - 40);
     // Lobby button
     ctx.fillStyle = '#4488ff';
     ctx.font = 'bold 20px Arial';
-    ctx.fillText('[ TERUG NAAR LOBBY ]', W / 2 + 80, H - 40);
+    ctx.fillText('[ TERUG NAAR LOBBY ]', W / 2 + 190, H - 40);
   }
 
   // ─ Minimap
@@ -1782,8 +1916,16 @@ function onMouseDown(e) {
     const H2 = canvas.height;
     const W2 = canvas.width;
     const btnY = H2 - 40;
-    const rematchX = W2 / 2 - 120;
-    const lobbyX   = W2 / 2 + 80;
+    const rematchX = W2 / 2 - 180;
+    const replayX  = W2 / 2;
+    const lobbyX   = W2 / 2 + 190;
+
+    if (cx2 >= replayX - 130 && cx2 <= replayX + 130 &&
+        cy2 >= btnY - 18 && cy2 <= btnY + 18) {
+      downloadLastReplay();
+      return;
+    }
+
     // Rematch button zone: rematchX ± 80, btnY ± 18
     if (gameMode === 'online' && !rematchRequested &&
         cx2 >= rematchX - 80 && cx2 <= rematchX + 80 &&
@@ -2029,6 +2171,7 @@ function initLobbyActions() {
   const aiBtn = document.getElementById('play-ai');
   const autoBtn = document.getElementById('play-online-auto');
   const partyBtn = document.getElementById('create-party-invite');
+  const replayBtn = document.getElementById('watch-last-replay');
   const codeBtn = document.getElementById('play-online-code');
   const codeInput = document.getElementById('room-code-input');
 
@@ -2053,6 +2196,14 @@ function initLobbyActions() {
       e.preventDefault();
       e.stopPropagation();
       if (!running) createPartyInvite();
+    };
+  }
+
+  if (replayBtn) {
+    replayBtn.onmousedown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!running) watchLastReplay();
     };
   }
 
@@ -2109,6 +2260,60 @@ function createPartyInvite() {
   }
 
   connectFirebaseRoom(roomId, 'Party invite actief… wacht op je teammate.');
+}
+
+function getLastReplay() {
+  try {
+    const raw = localStorage.getItem(REPLAY_STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.events) || !Number.isFinite(data.seed)) return null;
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
+
+function watchLastReplay() {
+  const data = getLastReplay();
+  if (!data) {
+    document.getElementById('lobby-status').textContent = 'Geen replay gevonden. Speel eerst een potje.';
+    return;
+  }
+
+  cleanupFirebaseRealtime(true);
+  if (net && net.disconnect) net.disconnect();
+  net = null;
+
+  replayMode = true;
+  replayData = data;
+  replayCursor = 0;
+  gameMode = 'replay';
+  myPending = 0;
+
+  document.getElementById('room-info').style.display = 'none';
+  document.getElementById('lobby-status').textContent = 'Replay wordt afgespeeld...';
+  initGame(data.seed, 0);
+  showMsg('Replay mode: alleen kijken', 4);
+}
+
+function downloadLastReplay() {
+  const data = getLastReplay();
+  if (!data) {
+    showMsg('Geen replay beschikbaar om te downloaden.', 3);
+    return;
+  }
+  const payload = JSON.stringify(data);
+  const blob = new Blob([payload], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const tag = new Date(data.savedAt || Date.now()).toISOString().replace(/[:.]/g, '-');
+  a.href = url;
+  a.download = `war-game-replay-${tag}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function randRoomId(len = 6) {
@@ -2241,6 +2446,27 @@ function connectFirebaseRoom(roomId, waitText) {
     const data = snap.val();
     if (!data || data.from === firebaseClientId || !data.cmd) return;
     if (data.ts && data.ts + 1500 < firebaseJoinedAt) return;
+
+    const sender = (firebaseRoomPlayers || []).find(p => p.clientId === data.from);
+    if (!sender || (sender.slot !== 0 && sender.slot !== 1)) {
+      flagCheat(1 - myP, 'onbekende sender');
+      return;
+    }
+
+    const issuer = sender.slot;
+    const now = Date.now();
+    cmdWindow[issuer].push(now);
+    cmdWindow[issuer] = cmdWindow[issuer].filter(t => now - t <= 3000);
+    if (cmdWindow[issuer].length > MAX_REMOTE_CMDS_PER_3S) {
+      flagCheat(issuer, 'command flood');
+      return;
+    }
+
+    if (!validateCommand(data.cmd, issuer)) {
+      flagCheat(issuer, 'ongeldige command');
+      return;
+    }
+
     execCmd(data.cmd);
   };
   firebaseCmdsRef.on('child_added', firebaseCmdHandler);
