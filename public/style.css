@@ -54,12 +54,6 @@ body {
 
 .lobby-btn:hover { background: #334670; }
 .lobby-btn:active { transform: translateY(1px); }
-.lobby-btn.alt {
-  background: #4a2f18;
-  border-color: #d48b32;
-  color: #ffe2b8;
-}
-.lobby-btn.alt:hover { background: #654122; }
 
 #online-badge {
   margin: 6px auto 2px;

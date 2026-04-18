@@ -229,13 +229,6 @@ let belastingCd = [0, 0];
 let plunderCd   = [0, 0];
 let aiThinkTimer = 0;
 let aiAttackTimer = 0;
-let survivalWave = 0;
-let survivalWaveTimer = 0;
-let survivalUnitsToSpawn = 0;
-let survivalSpawnTimer = 0;
-let survivalRewardPending = false;
-let survivalSpawnPoint = null;
-const SURVIVAL_FINAL_WAVE = 8;
 
 // Camera
 let camX = 0, camY = 0;
@@ -284,12 +277,6 @@ function initGame(seed, playerIdx) {
   plunderCd   = [0, 0];
   aiThinkTimer = 0;
   aiAttackTimer = 0;
-  survivalWave = 0;
-  survivalWaveTimer = 6;
-  survivalUnitsToSpawn = 0;
-  survivalSpawnTimer = 0;
-  survivalRewardPending = false;
-  survivalSpawnPoint = null;
   gameMsg = '';
   msgTimer = 0;
   lastTimestamp = 0;
@@ -462,13 +449,10 @@ function update(dt) {
 
   // ─ Win condition
   if (!getBase(0)) { winner = 1; running = false; }
-  if (gameMode !== 'survival' && !getBase(1)) { winner = 0; running = false; }
+  if (!getBase(1)) { winner = 0; running = false; }
 
   if (gameMode === 'ai' && running) {
     updateAI(dt);
-  }
-  if (gameMode === 'survival' && running) {
-    updateSurvival(dt);
   }
 
   // ─ Message timer
@@ -812,67 +796,6 @@ function updateAI(dt) {
   }
 }
 
-function updateSurvival(dt) {
-  const enemyP = 1;
-  const myBase = getBase(myP);
-  if (!myBase || !survivalSpawnPoint) return;
-
-  const enemyUnits = playerUnits(enemyP).filter(e => e.type !== WORKER);
-
-  if (survivalUnitsToSpawn > 0) {
-    survivalSpawnTimer -= dt;
-    if (survivalSpawnTimer <= 0) {
-      survivalSpawnTimer = 0.45;
-      const spawnType = survivalWave >= 3 && rng() < 0.35 ? ARCHER : SOLDIER;
-      spawnUnit(enemyP, spawnType, survivalSpawnPoint.x, survivalSpawnPoint.y);
-      const fresh = playerUnits(enemyP);
-      const spawned = fresh[fresh.length - 1];
-      if (spawned && myBase) {
-        execCmd({ type: 'ATTACK', ids: [spawned.id], tid: myBase.id });
-      }
-      survivalUnitsToSpawn--;
-    }
-    return;
-  }
-
-  if (enemyUnits.length === 0 && survivalWave >= SURVIVAL_FINAL_WAVE) {
-    winner = myP;
-    running = false;
-    return;
-  }
-
-  if (enemyUnits.length === 0 && survivalWave > 0 && !survivalRewardPending) {
-    survivalRewardPending = true;
-    const reward = 70 + survivalWave * 25;
-    gold[myP] += reward;
-    showMsg(`Wave ${survivalWave} overleefd. Bonus: +${reward} goud.`, 4);
-    survivalWaveTimer = 7;
-  }
-
-  if (enemyUnits.length > 0) {
-    return;
-  }
-
-  survivalWaveTimer -= dt;
-  if (survivalWaveTimer > 0) {
-    return;
-  }
-
-  if (survivalWave >= SURVIVAL_FINAL_WAVE) {
-    winner = myP;
-    running = false;
-    return;
-  }
-
-  survivalWave++;
-  survivalRewardPending = false;
-  survivalUnitsToSpawn = 3 + survivalWave * 2;
-  if (survivalWave >= 5) survivalUnitsToSpawn += 1;
-  survivalSpawnTimer = 0.2;
-  gold[myP] += 20 + survivalWave * 10;
-  showMsg(`Wave ${survivalWave} begint. Houd stand.`, 4);
-}
-
 function findBuildSpot(player, btype) {
   const base = getBase(player);
   if (!base) return null;
@@ -1092,11 +1015,8 @@ function updateHUD() {
   document.getElementById('income-1').textContent = 2 + Math.min(playerUnits(1).filter(e => e.type === WORKER).length, 5) + incomeLvl[1] * 2 + playerBuildings(1).filter(e => e.type === MARKET).length * DEF[MARKET].income;
 
   const msgEl = document.getElementById('game-msg');
-  const survivalInfo = gameMode === 'survival'
-    ? `SURVIVAL WAVE ${survivalWave}/${SURVIVAL_FINAL_WAVE}${survivalUnitsToSpawn > 0 ? ` • inkomend ${survivalUnitsToSpawn}` : survivalWave > 0 ? ` • volgende ${Math.max(0, survivalWaveTimer).toFixed(1)}s` : ` • start ${Math.max(0, survivalWaveTimer).toFixed(1)}s`}`
-    : '';
   const activeMsg = msgTimer > 0 ? gameMsg : '';
-  msgEl.textContent = [activeMsg, survivalInfo].filter(Boolean).join(' | ');
+  msgEl.textContent = activeMsg;
 
   const panel   = document.getElementById('action-btns');
   const ecoPanel = document.getElementById('eco-btns');
@@ -1463,44 +1383,13 @@ function startAIGame() {
   initGame(seed, 0);
 }
 
-function startSurvivalGame() {
-  gameMode = 'survival';
-  myPending = 0;
-  document.getElementById('lobby-status').textContent = 'Survival Rush wordt gestart...';
-  document.getElementById('room-info').style.display = 'none';
-  if (net && net.connected) {
-    net.disconnect();
-  }
-  const seed = ((Date.now() ^ (Math.random() * 1000000)) >>> 0) || 7331;
-  initGame(seed, 0);
-  gold[0] = 260;
-  gold[1] = 0;
-  incomeLvl[1] = 0;
-  survivalWaveTimer = 60;
-  survivalSpawnPoint = {
-    x: (MW - 4) * TS + TS / 2,
-    y: (MH - 4) * TS + TS / 2,
-  };
-  for (const e of playerEnts(1)) {
-    delete ents[e.id];
-  }
-}
-
 function initLobbyActions() {
   const aiBtn = document.getElementById('play-ai');
-  const survivalBtn = document.getElementById('play-survival');
   if (aiBtn) {
     aiBtn.onmousedown = (e) => {
       e.preventDefault();
       e.stopPropagation();
       if (!running) startAIGame();
-    };
-  }
-  if (survivalBtn) {
-    survivalBtn.onmousedown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!running) startSurvivalGame();
     };
   }
 }
@@ -1509,7 +1398,7 @@ function initNetwork() {
   if (typeof io !== 'function') {
     gameMode = 'offline';
     document.getElementById('lobby-status').textContent =
-      'Online multiplayer is hier niet beschikbaar. Gebruik Speel Tegen AI of Speel Survival Rush.';
+      'Online multiplayer is hier niet beschikbaar. Gebruik Speel Tegen AI.';
     document.getElementById('room-info').style.display = 'none';
     return;
   }
