@@ -1394,11 +1394,124 @@ function initLobbyActions() {
   }
 }
 
+function randRoomId(len = 6) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[(Math.random() * chars.length) | 0];
+  return out;
+}
+
+function initFirebaseNetwork() {
+  if (typeof firebase === 'undefined' || !window.FIREBASE_CONFIG) return false;
+
+  try {
+    gameMode = 'online';
+    const cfg = window.FIREBASE_CONFIG;
+    const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(cfg);
+    const db = firebase.database(app);
+    const clientId = `c_${Date.now().toString(36)}_${((Math.random() * 1e6) | 0).toString(36)}`;
+    const joinedAt = Date.now();
+
+    const hashRoom = (window.location.hash || '').replace('#', '').trim();
+    const roomId = hashRoom || randRoomId(6);
+    if (!hashRoom) window.location.hash = roomId;
+
+    const roomRef = db.ref(`rooms/${roomId}`);
+    const playersRef = roomRef.child('players');
+    const cmdsRef = roomRef.child('cmds');
+
+    playersRef.child(clientId).set({ joinedAt: firebase.database.ServerValue.TIMESTAMP });
+    playersRef.child(clientId).onDisconnect().remove();
+
+    roomRef.child('seed').transaction(cur => cur || (((Date.now() ^ (Math.random() * 1000000)) >>> 0) || 1337));
+
+    net = {
+      connected: true,
+      emit(event, payload) {
+        if (event !== 'cmd') return;
+        cmdsRef.push({
+          from: clientId,
+          cmd: payload,
+          ts: firebase.database.ServerValue.TIMESTAMP,
+        });
+      },
+      disconnect() {
+        this.connected = false;
+        playersRef.child(clientId).remove();
+      },
+    };
+
+    let started = false;
+    playersRef.on('value', snap => {
+      if (gameMode !== 'online') return;
+      const players = snap.val() || {};
+      const ids = Object.keys(players)
+        .sort((a, b) => (players[a].joinedAt || 0) - (players[b].joinedAt || 0));
+      const idx = ids.indexOf(clientId);
+
+      document.getElementById('room-id').textContent = roomId;
+      document.getElementById('room-info').style.display = 'block';
+
+      if (idx === -1) {
+        document.getElementById('lobby-status').textContent = 'Verbinding met room is verbroken.';
+        return;
+      }
+
+      if (idx > 1) {
+        document.getElementById('lobby-status').textContent = 'Kamer is vol. Open een nieuwe link.';
+        document.getElementById('waiting-msg').textContent = 'Deze room ondersteunt maximaal 2 spelers.';
+        return;
+      }
+
+      myPending = idx;
+      document.getElementById('lobby-status').textContent =
+        `Verbonden (serverloos)! Jij speelt als ${P_NAME[idx]}.`;
+
+      if (ids.length < 2) {
+        document.getElementById('waiting-msg').textContent =
+          'Wachten op tegenstander… Deel deze URL met een vriend.';
+        return;
+      }
+
+      document.getElementById('waiting-msg').textContent = 'Tegenstander gevonden! Spel start…';
+
+      if (!started && !running) {
+        started = true;
+        roomRef.child('seed').once('value').then(seedSnap => {
+          if (gameMode !== 'online' || running) return;
+          const seed = seedSnap.val() || 1337;
+          initGame(seed, myPending);
+        });
+      }
+
+      if (running && ids.length < 2) {
+        showMsg('De tegenstander heeft de verbinding verbroken.', 10);
+        winner = myP;
+        running = false;
+      }
+    });
+
+    cmdsRef.on('child_added', snap => {
+      if (gameMode !== 'online') return;
+      const data = snap.val();
+      if (!data || data.from === clientId || !data.cmd) return;
+      if (data.ts && data.ts + 1500 < joinedAt) return;
+      execCmd(data.cmd);
+    });
+
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
 function initNetwork() {
+  if (initFirebaseNetwork()) return;
+
   if (typeof io !== 'function') {
     gameMode = 'offline';
     document.getElementById('lobby-status').textContent =
-      'Online multiplayer is hier niet beschikbaar. Gebruik Speel Tegen AI.';
+      'Online niet actief: voeg Firebase config toe in public/firebase-config.js. Gebruik intussen Speel Tegen AI.';
     document.getElementById('room-info').style.display = 'none';
     return;
   }
