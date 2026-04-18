@@ -56,7 +56,6 @@ const BIOMES = [
   },
 ];
 let currentBiomeName = 'Bosland';
-const REPLAY_STORAGE_KEY = 'wg_last_replay_v1';
 const MAX_REMOTE_CMDS_PER_3S = 70;
 
 // Player colours
@@ -329,11 +328,6 @@ let fogEnabled = true;        // Fog of war on/off
 let fogTiles = null;          // Set of "tx,ty" strings visible to myP this frame
 let rematchRequested = false; // This client requested rematch
 let rematchListening = false; // Already listening for rematch
-let simTime = 0;
-let replayMode = false;
-let replayData = null;
-let replayCursor = 0;
-let replayRecording = null;
 let antiCheatHits = [0, 0];
 let cmdWindow = [[], []];
 
@@ -387,7 +381,6 @@ function initGame(seed, playerIdx) {
   gameMsg = '';
   msgTimer = 0;
   lastTimestamp = 0;
-  simTime = 0;
   disconnectTimer = 0;
   disconnectingPlayer = -1;
   antiCheatHits = [0, 0];
@@ -406,22 +399,6 @@ function initGame(seed, playerIdx) {
   generateMap(seed);
   spawnStart();
   showMsg(`Biome: ${currentBiomeName}`, 4);
-
-  if (!replayMode) {
-    replayRecording = {
-      version: 1,
-      seed,
-      biome: currentBiomeName,
-      mode: gameMode,
-      startedAt: Date.now(),
-      players: [
-        { slot: 0, name: firebaseRoomPlayers[0] && firebaseRoomPlayers[0].name ? firebaseRoomPlayers[0].name : P_NAME[0] },
-        { slot: 1, name: firebaseRoomPlayers[1] && firebaseRoomPlayers[1].name ? firebaseRoomPlayers[1].name : P_NAME[1] },
-      ],
-      events: [],
-      winner: null,
-    };
-  }
 
   // Focus camera on own base
   const myBase = getBase(myP);
@@ -481,14 +458,6 @@ function gameLoop(ts) {
 // ── Update ─────────────────────────────────────────────────
 function update(dt) {
   if (!running) return;
-  simTime += dt;
-
-  if (replayMode && replayData && Array.isArray(replayData.events)) {
-    while (replayCursor < replayData.events.length && replayData.events[replayCursor].t <= simTime + 0.0001) {
-      execCmd(replayData.events[replayCursor].cmd, true);
-      replayCursor++;
-    }
-  }
 
   // ─ Gold income (passive + workers + markets)
   goldTimer += dt;
@@ -684,14 +653,6 @@ function inferCmdPlayer(cmd) {
   return -1;
 }
 
-function recordReplayEvent(cmd) {
-  if (!replayRecording || replayMode) return;
-  replayRecording.events.push({
-    t: Number(simTime.toFixed(3)),
-    cmd: JSON.parse(JSON.stringify(cmd)),
-  });
-}
-
 function validateCommand(cmd, issuerPlayer) {
   if (!cmd || typeof cmd !== 'object' || typeof cmd.type !== 'string') return false;
 
@@ -750,8 +711,7 @@ function flagCheat(player, reason) {
   }
 }
 
-function execCmd(cmd, fromReplay = false) {
-  if (!fromReplay) recordReplayEvent(cmd);
+function execCmd(cmd) {
   switch (cmd.type) {
 
     case 'MOVE': {
@@ -979,7 +939,6 @@ function execCmd(cmd, fromReplay = false) {
 }
 
 function sendCmd(cmd) {
-  if (replayMode) return;
   const issuer = inferCmdPlayer(cmd) !== -1 ? inferCmdPlayer(cmd) : myP;
   if (!validateCommand(cmd, issuer)) {
     if (issuer === myP) showMsg('Actie geblokkeerd door anti-cheat validatie.', 3);
@@ -1124,10 +1083,6 @@ function returnToLobby() {
   cleanupFirebaseRealtime(true);
   if (net && net.disconnect) net.disconnect();
   gameMode = 'offline';
-  replayMode = false;
-  replayData = null;
-  replayCursor = 0;
-  replayRecording = null;
   running = false;
   winner = null;
   sel.clear();
@@ -1252,14 +1207,6 @@ function finalizeGame(winnerIdx) {
   if (!running) return;
   winner = winnerIdx;
   running = false;
-  if (!replayMode && replayRecording) {
-    replayRecording.winner = winnerIdx;
-    replayRecording.duration = Number(simTime.toFixed(3));
-    replayRecording.savedAt = Date.now();
-    try {
-      localStorage.setItem(REPLAY_STORAGE_KEY, JSON.stringify(replayRecording));
-    } catch (_) {}
-  }
   submitOnlineMatchResult();
 }
 
@@ -1586,22 +1533,18 @@ function render() {
     if (rematchRequested) {
       ctx.fillText('Wachten op tegenstander voor rematch...', W / 2, H / 2 + 30);
     } else {
-      ctx.fillText(replayMode ? 'Replay klaar. Kies een optie hieronder' : 'Kies een optie hieronder', W / 2, H / 2 + 30);
+      ctx.fillText('Kies een optie hieronder', W / 2, H / 2 + 30);
     }
     // Rematch button (only online mode)
     if (gameMode === 'online' && !rematchRequested) {
       ctx.fillStyle = '#22aa55';
       ctx.font = 'bold 20px Arial';
-      ctx.fillText('[ REMATCH ]', W / 2 - 180, H - 40);
+      ctx.fillText('[ REMATCH ]', W / 2 - 120, H - 40);
     }
-    // Download replay button
-    ctx.fillStyle = '#ffb347';
-    ctx.font = 'bold 20px Arial';
-    ctx.fillText('[ DOWNLOAD REPLAY ]', W / 2, H - 40);
     // Lobby button
     ctx.fillStyle = '#4488ff';
     ctx.font = 'bold 20px Arial';
-    ctx.fillText('[ TERUG NAAR LOBBY ]', W / 2 + 190, H - 40);
+    ctx.fillText('[ TERUG NAAR LOBBY ]', W / 2 + 80, H - 40);
   }
 
   // ─ Minimap
@@ -1916,15 +1859,8 @@ function onMouseDown(e) {
     const H2 = canvas.height;
     const W2 = canvas.width;
     const btnY = H2 - 40;
-    const rematchX = W2 / 2 - 180;
-    const replayX  = W2 / 2;
-    const lobbyX   = W2 / 2 + 190;
-
-    if (cx2 >= replayX - 130 && cx2 <= replayX + 130 &&
-        cy2 >= btnY - 18 && cy2 <= btnY + 18) {
-      downloadLastReplay();
-      return;
-    }
+    const rematchX = W2 / 2 - 120;
+    const lobbyX   = W2 / 2 + 80;
 
     // Rematch button zone: rematchX ± 80, btnY ± 18
     if (gameMode === 'online' && !rematchRequested &&
@@ -2171,7 +2107,6 @@ function initLobbyActions() {
   const aiBtn = document.getElementById('play-ai');
   const autoBtn = document.getElementById('play-online-auto');
   const partyBtn = document.getElementById('create-party-invite');
-  const replayBtn = document.getElementById('watch-last-replay');
   const codeBtn = document.getElementById('play-online-code');
   const codeInput = document.getElementById('room-code-input');
 
@@ -2196,14 +2131,6 @@ function initLobbyActions() {
       e.preventDefault();
       e.stopPropagation();
       if (!running) createPartyInvite();
-    };
-  }
-
-  if (replayBtn) {
-    replayBtn.onmousedown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!running) watchLastReplay();
     };
   }
 
@@ -2260,60 +2187,6 @@ function createPartyInvite() {
   }
 
   connectFirebaseRoom(roomId, 'Party invite actief… wacht op je teammate.');
-}
-
-function getLastReplay() {
-  try {
-    const raw = localStorage.getItem(REPLAY_STORAGE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (!data || !Array.isArray(data.events) || !Number.isFinite(data.seed)) return null;
-    return data;
-  } catch (_) {
-    return null;
-  }
-}
-
-function watchLastReplay() {
-  const data = getLastReplay();
-  if (!data) {
-    document.getElementById('lobby-status').textContent = 'Geen replay gevonden. Speel eerst een potje.';
-    return;
-  }
-
-  cleanupFirebaseRealtime(true);
-  if (net && net.disconnect) net.disconnect();
-  net = null;
-
-  replayMode = true;
-  replayData = data;
-  replayCursor = 0;
-  gameMode = 'replay';
-  myPending = 0;
-
-  document.getElementById('room-info').style.display = 'none';
-  document.getElementById('lobby-status').textContent = 'Replay wordt afgespeeld...';
-  initGame(data.seed, 0);
-  showMsg('Replay mode: alleen kijken', 4);
-}
-
-function downloadLastReplay() {
-  const data = getLastReplay();
-  if (!data) {
-    showMsg('Geen replay beschikbaar om te downloaden.', 3);
-    return;
-  }
-  const payload = JSON.stringify(data);
-  const blob = new Blob([payload], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const tag = new Date(data.savedAt || Date.now()).toISOString().replace(/[:.]/g, '-');
-  a.href = url;
-  a.download = `war-game-replay-${tag}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 function randRoomId(len = 6) {

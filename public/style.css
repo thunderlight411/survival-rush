@@ -103,11 +103,6 @@ body {
 .lobby-btn:hover { background: #334670; }
 .lobby-btn:active { transform: translateY(1px); }
 
-#watch-last-replay {
-  border-color: #8f7cff;
-  color: #ded5ff;
-}
-
 #party-help {
   margin: 2px 0 8px;
   color: #93a8d8;
