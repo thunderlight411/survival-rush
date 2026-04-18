@@ -235,6 +235,8 @@ let playerRating = 1000;
 let playerWins = 0;
 let playerLosses = 0;
 let leaderboardRows = [];
+let disconnectTimer = 0;     // Time left for opponent to reconnect (0 = not disconnected)
+let disconnectingPlayer = -1; // Which player is disconnected (-1 = none)
 
 // Camera
 let camX = 0, camY = 0;
@@ -286,6 +288,8 @@ function initGame(seed, playerIdx) {
   gameMsg = '';
   msgTimer = 0;
   lastTimestamp = 0;
+  disconnectTimer = 0;
+  disconnectingPlayer = -1;
   ents    = {};
   idCnt   = [0, 0];
   sel.clear();
@@ -459,7 +463,19 @@ function update(dt) {
 
   if (gameMode === 'ai' && running) {
     updateAI(dt);
+  }Disconnect timeout: if opponent doesn't reconnect in 10s, auto-lose
+  if (running && gameMode === 'online' && disconnectTimer > 0) {
+    disconnectTimer -= dt;
+    if (disconnectTimer <= 0) {
+      // Opponent did not reconnect, they lose
+      const loser = disconnectingPlayer;
+      const winner = loser === 0 ? 1 : 0;
+      finalizeGame(winner);
+      showMsg(`Tegenstander niet terugverbonden. Jij wint!`, 8);
+    }
   }
+
+  // ─ 
 
   // ─ Message timer
   if (msgTimer > 0) msgTimer -= dt;
@@ -1253,6 +1269,11 @@ function updateHUD() {
   const activeMsg = msgTimer > 0 ? gameMsg : '';
   msgEl.textContent = activeMsg;
 
+  // Show disconnect timer if active
+  if (running && gameMode === 'online' && disconnectTimer > 0) {
+    msgEl.textContent = `Tegenstander verbroken: ${Math.ceil(disconnectTimer)}s om te reconnecten...`;
+  }
+
   const panel   = document.getElementById('action-btns');
   const ecoPanel = document.getElementById('eco-btns');
   const nameEl  = document.getElementById('entity-name');
@@ -1835,12 +1856,23 @@ function connectFirebaseRoom(roomId, waitText) {
 
     if (ids.length < 2) {
       if (running) {
-        showMsg('De tegenstander heeft de verbinding verbroken.', 10);
-        finalizeGame(myP);
+        // Opponent disconnected during game - start 10-second reconnect timer
+        if (disconnectTimer <= 0) {
+          disconnectTimer = 10;  // 10 second reconnect window
+          disconnectingPlayer = myP === 0 ? 1 : 0;  // The OTHER player is disconnected
+          showMsg(`Tegenstander verbroken. ${Math.ceil(disconnectTimer)}s reconnect timeout...`, 12);
+        }
       } else {
         document.getElementById('waiting-msg').textContent = waitText;
       }
       return;
+    }
+
+    // Opponent reconnected, cancel timeout
+    if (running && ids.length === 2 && disconnectTimer > 0) {
+      disconnectTimer = 0;
+      disconnectingPlayer = -1;
+      showMsg('Tegenstander terug!', 3);
     }
 
     document.getElementById('waiting-msg').textContent = 'Tegenstander gevonden! Spel start…';
