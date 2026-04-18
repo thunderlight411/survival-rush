@@ -2028,6 +2028,7 @@ function startAIGame() {
 function initLobbyActions() {
   const aiBtn = document.getElementById('play-ai');
   const autoBtn = document.getElementById('play-online-auto');
+  const partyBtn = document.getElementById('create-party-invite');
   const codeBtn = document.getElementById('play-online-code');
   const codeInput = document.getElementById('room-code-input');
 
@@ -2044,6 +2045,14 @@ function initLobbyActions() {
       e.preventDefault();
       e.stopPropagation();
       if (!running) startFirebaseAutoMatch();
+    };
+  }
+
+  if (partyBtn) {
+    partyBtn.onmousedown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!running) createPartyInvite();
     };
   }
 
@@ -2067,6 +2076,39 @@ function initLobbyActions() {
       }
     };
   }
+}
+
+function createPartyInvite() {
+  if (!ensureFirebaseClient()) {
+    document.getElementById('lobby-status').textContent =
+      'Firebase config ontbreekt. Vul public/firebase-config.js in of speel tegen AI.';
+    return;
+  }
+
+  const roomId = `PTY${randRoomId(8)}`;
+  const codeInput = document.getElementById('room-code-input');
+  if (codeInput) codeInput.value = roomId;
+  window.location.hash = roomId;
+
+  const inviteUrl = `${window.location.origin}${window.location.pathname}#${roomId}`;
+  document.getElementById('lobby-status').textContent =
+    'Party invite gemaakt. Deel de link met je vriend.';
+
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(inviteUrl)
+      .then(() => {
+        showMsg('Party link gekopieerd naar klembord.', 3);
+      })
+      .catch(() => {
+        document.getElementById('lobby-status').textContent =
+          `Party link: ${inviteUrl}`;
+      });
+  } else {
+    document.getElementById('lobby-status').textContent =
+      `Party link: ${inviteUrl}`;
+  }
+
+  connectFirebaseRoom(roomId, 'Party invite actief… wacht op je teammate.');
 }
 
 function randRoomId(len = 6) {
