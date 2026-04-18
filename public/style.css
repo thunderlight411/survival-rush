@@ -194,10 +194,82 @@ body {
 .dot.red  { background: #ff4444; }
 
 /* Canvas */
+#game-area {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
 #canvas {
   flex: 1;
   display: block;
   cursor: crosshair;
+}
+
+/* Unit legend sidebar */
+#unit-legend {
+  width: 158px;
+  flex-shrink: 0;
+  background: #0e0e1c;
+  border-left: 1px solid #2a2a44;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  overflow-y: auto;
+  font-size: 0.78rem;
+}
+
+.legend-title {
+  font-weight: 700;
+  color: #88aaff;
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.legend-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(255,255,255,0.15);
+}
+
+.legend-info { flex: 1; }
+.legend-name { color: #cde; font-size: 0.75rem; font-weight: 600; }
+.legend-count { color: #7a9acc; font-size: 0.72rem; }
+.legend-counter { color: #ffd97a; font-size: 0.68rem; }
+
+.legend-divider {
+  border-top: 1px solid #2a2a44;
+  margin: 6px 0;
+}
+
+.legend-section {
+  color: #88aaff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.legend-counter-info div {
+  color: #aabbd8;
+  font-size: 0.71rem;
+  margin-bottom: 3px;
+  line-height: 1.4;
 }
 
 /* Bottom panel */

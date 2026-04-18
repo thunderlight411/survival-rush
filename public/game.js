@@ -26,6 +26,9 @@ const P_NAME  = ['Blauw', 'Rood'];
 const WORKER   = 'worker';
 const SOLDIER  = 'soldier';
 const ARCHER   = 'archer';
+const CAVALRY  = 'cavalry';
+const SPEARMAN = 'spearman';
+const SIEGE    = 'siege';
 const BASE     = 'base';
 const BARRACKS = 'barracks';
 const TOWER    = 'tower';
@@ -46,14 +49,25 @@ const WALL     = 'wall';
    ta  = trainable-at building types (units only)
    auto= auto-attack without order (towers)          */
 const DEF = {
-  [WORKER]:  { u:1,hp:60, spd:90, dmg:8, rng:36, cd:1.5,cost:50, tm:6,  fw:1,fh:1,letter:'W',ta:[BASE,BARRACKS] },
-  [SOLDIER]: { u:1,hp:140,spd:80, dmg:25,rng:36, cd:1.2,cost:100,tm:10, fw:1,fh:1,letter:'S',ta:[BASE,BARRACKS] },
-  [ARCHER]:  { u:1,hp:90, spd:80, dmg:18,rng:200,cd:1.8,cost:120,tm:12, fw:1,fh:1,letter:'A',ta:[BARRACKS] },
-  [BASE]:    { u:0,hp:600,spd:0,  dmg:0, rng:0,  cd:0,  cost:0,  tm:0,  fw:2,fh:2,letter:'⌂' },
-  [BARRACKS]:{ u:0,hp:350,spd:0,  dmg:0, rng:0,  cd:0,  cost:120,tm:0,  fw:2,fh:2,letter:'R' },
-  [TOWER]:   { u:0,hp:250,spd:0,  dmg:12,rng:5*TS,cd:1.5,cost:80,tm:0,  fw:1,fh:1,letter:'↑',auto:true },
-  [MARKET]:  { u:0,hp:200,spd:0,  dmg:0, rng:0,  cd:0,  cost:150,tm:0,  fw:2,fh:1,letter:'$',income:4 },
-  [WALL]:    { u:0,hp:500,spd:0,  dmg:0, rng:0,  cd:0,  cost:50, tm:0,  fw:1,fh:1,letter:'█' },
+  [WORKER]:  { u:1,hp:60, spd:90, dmg:8,  rng:36,    cd:1.5,cost:50, tm:6,  fw:1,fh:1,letter:'W',ta:[BASE,BARRACKS] },
+  [SOLDIER]: { u:1,hp:140,spd:80, dmg:25, rng:36,    cd:1.2,cost:100,tm:10, fw:1,fh:1,letter:'S',ta:[BASE,BARRACKS] },
+  [ARCHER]:  { u:1,hp:90, spd:80, dmg:18, rng:200,   cd:1.8,cost:120,tm:12, fw:1,fh:1,letter:'A',ta:[BARRACKS] },
+  [CAVALRY]: { u:1,hp:110,spd:130,dmg:28, rng:36,    cd:1.0,cost:130,tm:13, fw:1,fh:1,letter:'C',ta:[BARRACKS] },
+  [SPEARMAN]:{ u:1,hp:180,spd:60, dmg:20, rng:36,    cd:1.4,cost:110,tm:11, fw:1,fh:1,letter:'P',ta:[BARRACKS] },
+  [SIEGE]:   { u:1,hp:120,spd:45, dmg:14, rng:190,   cd:2.8,cost:180,tm:18, fw:1,fh:1,letter:'⚙',ta:[BARRACKS] },
+  [BASE]:    { u:0,hp:600,spd:0,  dmg:0,  rng:0,     cd:0,  cost:0,  tm:0,  fw:2,fh:2,letter:'⌂' },
+  [BARRACKS]:{ u:0,hp:350,spd:0,  dmg:0,  rng:0,     cd:0,  cost:120,tm:0,  fw:2,fh:2,letter:'R' },
+  [TOWER]:   { u:0,hp:250,spd:0,  dmg:12, rng:5*TS,  cd:1.5,cost:80, tm:0,  fw:1,fh:1,letter:'↑',auto:true },
+  [MARKET]:  { u:0,hp:200,spd:0,  dmg:0,  rng:0,     cd:0,  cost:150,tm:0,  fw:2,fh:1,letter:'$',income:4 },
+  [WALL]:    { u:0,hp:500,spd:0,  dmg:0,  rng:0,     cd:0,  cost:50, tm:0,  fw:1,fh:1,letter:'█' },
+};
+
+// Counter multipliers: attacker type → victim types → damage multiplier
+const COUNTER_BONUS = {
+  [CAVALRY]:  { [ARCHER]:   1.9 },
+  [ARCHER]:   { [SPEARMAN]: 1.9 },
+  [SPEARMAN]: { [CAVALRY]:  1.9 },
+  [SIEGE]:    { [BASE]:2.8, [BARRACKS]:2.8, [TOWER]:2.8, [MARKET]:2.8, [WALL]:2.8 },
 };
 
 // ── Seeded RNG (xorshift32) ────────────────────────────────
@@ -512,7 +526,13 @@ function clampCam() {
   camY = Math.max(0, Math.min(camY, Math.max(0, maxY)));
 }
 
-function dealDamage(target, dmg, _sourceId) {
+function dealDamage(target, dmg, sourceId) {
+  // Apply counter-type bonus damage
+  if (sourceId !== null && ents[sourceId]) {
+    const srcType = ents[sourceId].type;
+    const bonuses = COUNTER_BONUS[srcType];
+    if (bonuses && bonuses[target.type]) dmg = Math.round(dmg * bonuses[target.type]);
+  }
   target.hp -= dmg;
   if (target.hp <= 0) {
     // Clear references
@@ -822,11 +842,19 @@ function updateAI(dt) {
 
   // Geen TACTIC_REPAIR, TACTIC_MERCS of TACTIC_BOOST — AI gebruikt geen tactieken
 
-  // Traint alleen soldaten (geen boogschutters), beperkt tot 8 units
+  // Traint mix van units, beperkt tot 8 units
   if (aiBarracks.length > 0 && playerUnits(aiP).length < 8) {
     const targetBarracks = aiBarracks[0];
-    if (gold[aiP] >= DEF[SOLDIER].cost + 50) {
-      execCmd({ type: 'TRAIN', player: aiP, bid: targetBarracks.id, utype: SOLDIER });
+    const trainPool = [
+      { utype: SOLDIER,  cost: DEF[SOLDIER].cost },
+      { utype: ARCHER,   cost: DEF[ARCHER].cost },
+      { utype: CAVALRY,  cost: DEF[CAVALRY].cost },
+      { utype: SPEARMAN, cost: DEF[SPEARMAN].cost },
+    ];
+    const affordable = trainPool.filter(u => gold[aiP] >= u.cost + 40);
+    if (affordable.length > 0) {
+      const pick = affordable[Math.floor(Math.random() * affordable.length)];
+      execCmd({ type: 'TRAIN', player: aiP, bid: targetBarracks.id, utype: pick.utype });
     }
   }
 
@@ -869,7 +897,7 @@ function showMsg(msg, dur = 3) { gameMsg = msg; msgTimer = dur; }
 
 // Vision radius per type (in tiles)
 const VISION_R = {
-  [WORKER]: 5, [SOLDIER]: 6, [ARCHER]: 7,
+  [WORKER]: 5, [SOLDIER]: 6, [ARCHER]: 7, [CAVALRY]: 7, [SPEARMAN]: 5, [SIEGE]: 5,
   [BASE]: 8, [BARRACKS]: 5, [TOWER]: 7, [MARKET]: 4, [WALL]: 3,
 };
 
@@ -1414,6 +1442,8 @@ function updateHUD() {
   document.getElementById('income-0').textContent = 2 + Math.min(playerUnits(0).filter(e => e.type === WORKER).length, 5) + incomeLvl[0] * 2 + playerBuildings(0).filter(e => e.type === MARKET).length * DEF[MARKET].income;
   document.getElementById('income-1').textContent = 2 + Math.min(playerUnits(1).filter(e => e.type === WORKER).length, 5) + incomeLvl[1] * 2 + playerBuildings(1).filter(e => e.type === MARKET).length * DEF[MARKET].income;
 
+  updateLegend();
+
   const msgEl = document.getElementById('game-msg');
   const activeMsg = msgTimer > 0 ? gameMsg : '';
   msgEl.textContent = activeMsg;
@@ -1511,9 +1541,15 @@ function updateHUD() {
   if (!d.u) {
     if (first.type === BASE || first.type === BARRACKS) {
       if (DEF[SOLDIER].ta.includes(first.type))
-        addBtn(panel, `Train Soldaat (100g, 10s)`, 'train', () => sendCmd({ type:'TRAIN', player:myP, bid:first.id, utype:SOLDIER }));
+        addBtn(panel, `Train Soldaat (100g, 10s)`,       'train', () => sendCmd({ type:'TRAIN', player:myP, bid:first.id, utype:SOLDIER }));
       if (DEF[ARCHER].ta.includes(first.type))
-        addBtn(panel, `Train Boogschutter (120g, 12s)`, 'train', () => sendCmd({ type:'TRAIN', player:myP, bid:first.id, utype:ARCHER }));
+        addBtn(panel, `Train Boogschutter (120g, 12s)`,  'train', () => sendCmd({ type:'TRAIN', player:myP, bid:first.id, utype:ARCHER }));
+      if (DEF[CAVALRY].ta.includes(first.type))
+        addBtn(panel, `Train Ruiter (130g, 13s)`,        'train', () => sendCmd({ type:'TRAIN', player:myP, bid:first.id, utype:CAVALRY }));
+      if (DEF[SPEARMAN].ta.includes(first.type))
+        addBtn(panel, `Train Speerdrager (110g, 11s)`,   'train', () => sendCmd({ type:'TRAIN', player:myP, bid:first.id, utype:SPEARMAN }));
+      if (DEF[SIEGE].ta.includes(first.type))
+        addBtn(panel, `Train Belegeraar (180g, 18s)`,    'train', () => sendCmd({ type:'TRAIN', player:myP, bid:first.id, utype:SIEGE }));
     }
     if (first.type === BASE) {
       addBtn(panel, `Train Werker (50g, 6s)`, 'train', () => sendCmd({ type:'TRAIN', player:myP, bid:first.id, utype:WORKER }));
@@ -1523,8 +1559,40 @@ function updateHUD() {
 
 function typeName(t) {
   return { worker:'Werker', soldier:'Soldaat', archer:'Boogschutter',
+           cavalry:'Ruiter', spearman:'Speerdrager', siege:'Belegeraar',
            base:'Hoofdkwartier', barracks:'Kazerne', tower:'Toren',
            market:'Markt', wall:'Muur' }[t] || t;
+}
+
+const LEGEND_UNITS = [WORKER, SOLDIER, ARCHER, CAVALRY, SPEARMAN, SIEGE];
+const COUNTER_LABEL = {
+  [CAVALRY]:  '✓ vs Boogschutter',
+  [ARCHER]:   '✓ vs Speerdrager',
+  [SPEARMAN]: '✓ vs Ruiter',
+  [SIEGE]:    '✓ vs Gebouwen',
+};
+
+function updateLegend() {
+  if (myP === -1) return;
+  const container = document.getElementById('legend-rows');
+  if (!container) return;
+  container.innerHTML = '';
+  for (const utype of LEGEND_UNITS) {
+    const count = playerUnits(myP).filter(e => e.type === utype).length;
+    const d     = DEF[utype];
+    const row   = document.createElement('div');
+    row.className = 'legend-row';
+    const clr = P_COLOR[myP];
+    row.innerHTML = `
+      <div class="legend-badge" style="background:${clr}22;border-color:${clr}66;color:${clr}">${d.letter}</div>
+      <div class="legend-info">
+        <div class="legend-name">${typeName(utype)}</div>
+        <div class="legend-count">×${count}</div>
+        ${COUNTER_LABEL[utype] ? `<div class="legend-counter">${COUNTER_LABEL[utype]}</div>` : ''}
+      </div>
+    `;
+    container.appendChild(row);
+  }
 }
 
 function addBtn(parent, text, cls, cb) {
