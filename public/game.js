@@ -1621,8 +1621,9 @@ function startFirebaseAutoMatch() {
   document.getElementById('lobby-status').textContent = 'Automatch zoekt een tegenstander…';
   window.location.hash = '';
 
-  firebaseOpenRef = firebaseDb.ref('matchmaking/open');
-  firebaseAssignRef = firebaseDb.ref(`matchmaking/assignments/${firebaseClientId}`);
+  const mmRef = firebaseDb.ref('rooms/_matchmaking');
+  firebaseOpenRef = mmRef.child('open');
+  firebaseAssignRef = mmRef.child(`assignments/${firebaseClientId}`);
 
   firebaseOpenRef.child(firebaseClientId).set({ joinedAt: firebase.database.ServerValue.TIMESTAMP });
   firebaseOpenRef.child(firebaseClientId).onDisconnect().remove();
@@ -1649,7 +1650,7 @@ function startFirebaseAutoMatch() {
 
     firebaseAutoResolving = true;
     const oppId = oppIds[0];
-    const claimRef = firebaseDb.ref(`matchmaking/claims/${oppId}`);
+    const claimRef = mmRef.child(`claims/${oppId}`);
 
     claimRef.transaction(cur => cur || firebaseClientId, (err, committed, claimSnap) => {
       if (err || !committed || !claimSnap || claimSnap.val() !== firebaseClientId) {
@@ -1658,7 +1659,7 @@ function startFirebaseAutoMatch() {
       }
 
       const roomId = makeAutoRoomId(firebaseClientId, oppId);
-      firebaseDb.ref('matchmaking').update({
+      mmRef.update({
         [`assignments/${firebaseClientId}`]: roomId,
         [`assignments/${oppId}`]: roomId,
         [`open/${firebaseClientId}`]: null,
