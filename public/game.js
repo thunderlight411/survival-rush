@@ -14,8 +14,48 @@ const CAM_SPD = 300;    // camera scroll speed (px/s)
 // Tile types
 const GRASS = 0, WATER = 1, FOREST = 2, MOUNTAIN = 3;
 const WALKABLE   = [true, false, true, false];
-const TILE_COLOR = ['#3a7530', '#1a4e9e', '#27561a', '#555566'];
-const TILE_DARK  = ['#2d5c25', '#13387a', '#1d4013', '#444455'];
+let TILE_COLOR = ['#3a7530', '#1a4e9e', '#27561a', '#555566'];
+let TILE_DARK  = ['#2d5c25', '#13387a', '#1d4013', '#444455'];
+
+const BIOMES = [
+  {
+    id: 'woodlands',
+    name: 'Bosland',
+    palette: {
+      color: ['#3a7530', '#1a4e9e', '#27561a', '#555566'],
+      dark:  ['#2d5c25', '#13387a', '#1d4013', '#444455'],
+    },
+    cfg: { water: 3, mountain: 4, forest: 7, riverChance: 0.2 }
+  },
+  {
+    id: 'islands',
+    name: 'Archipel',
+    palette: {
+      color: ['#74a84f', '#2a78c8', '#4e7f33', '#7f858d'],
+      dark:  ['#5a873d', '#1f5f9f', '#3e6628', '#676c74'],
+    },
+    cfg: { water: 7, mountain: 2, forest: 4, riverChance: 0.55 }
+  },
+  {
+    id: 'highlands',
+    name: 'Hoogland',
+    palette: {
+      color: ['#76934d', '#2a66aa', '#5a723d', '#8a8f99'],
+      dark:  ['#5e773d', '#214f86', '#465b2f', '#6f747d'],
+    },
+    cfg: { water: 2, mountain: 7, forest: 4, riverChance: 0.3 }
+  },
+  {
+    id: 'marsh',
+    name: 'Moeras',
+    palette: {
+      color: ['#5f7f43', '#356d6e', '#3f5f2f', '#6a6a70'],
+      dark:  ['#4d6736', '#2b5758', '#334c26', '#56565c'],
+    },
+    cfg: { water: 5, mountain: 3, forest: 8, riverChance: 0.45 }
+  },
+];
+let currentBiomeName = 'Bosland';
 
 // Player colours
 const P_COLOR = ['#4488ff', '#ff4444'];
@@ -88,25 +128,57 @@ function generateMap(seed) {
   rngSeed(seed);
   mapTiles = Array.from({ length: MH }, () => new Uint8Array(MW));
   const half = MW >> 1;
+  const biome = BIOMES[Math.floor(rng() * BIOMES.length)];
+
+  applyBiomePalette(biome);
+  currentBiomeName = biome.name;
 
   // Water lakes
-  for (let i = 0; i < 3; i++)
+  for (let i = 0; i < biome.cfg.water; i++)
     blobTile(rngInt(6, half - 6), rngInt(4, MH - 5), rngInt(2, 4), WATER);
   // Mountain ridges
-  for (let i = 0; i < 4; i++)
+  for (let i = 0; i < biome.cfg.mountain; i++)
     blobTile(rngInt(5, half - 5), rngInt(3, MH - 4), rngInt(1, 3), MOUNTAIN);
   // Forests
-  for (let i = 0; i < 6; i++)
+  for (let i = 0; i < biome.cfg.forest; i++)
     blobTile(rngInt(3, half - 3), rngInt(2, MH - 3), rngInt(2, 4), FOREST);
+
+  if (rng() < biome.cfg.riverChance) carveRiverLeftHalf();
 
   // Mirror left half onto right half (symmetric map)
   for (let y = 0; y < MH; y++)
     for (let x = 0; x < half; x++)
       mapTiles[y][MW - 1 - x] = mapTiles[y][x];
 
-  // Clear starting zones so players can move freely
+  // Clear all corner start zones so random corner spawns are always playable
   clearZone(1, 1, 11, 11);
+  clearZone(MW - 12, 1, MW - 2, 11);
+  clearZone(1, MH - 12, 11, MH - 2);
   clearZone(MW - 12, MH - 12, MW - 2, MH - 2);
+
+  // Open a middle lane to reduce hard stalemates on some biome rolls
+  clearZone((MW >> 1) - 2, (MH >> 1) - 3, (MW >> 1) + 1, (MH >> 1) + 2);
+}
+
+function applyBiomePalette(biome) {
+  TILE_COLOR = biome.palette.color.slice();
+  TILE_DARK  = biome.palette.dark.slice();
+}
+
+function carveRiverLeftHalf() {
+  const half = MW >> 1;
+  let y = rngInt(4, MH - 5);
+  let width = rng() < 0.45 ? 2 : 1;
+
+  for (let x = 2; x < half - 2; x++) {
+    if (rng() < 0.55) y += rng() < 0.5 ? -1 : 1;
+    y = Math.max(2, Math.min(MH - 3, y));
+    for (let w = -width; w <= width; w++) {
+      const yy = y + w;
+      if (yy >= 0 && yy < MH) mapTiles[yy][x] = WATER;
+    }
+    if (rng() < 0.12) width = Math.max(1, Math.min(2, width + (rng() < 0.5 ? -1 : 1)));
+  }
 }
 
 function blobTile(cx, cy, r, type) {
@@ -321,6 +393,7 @@ function initGame(seed, playerIdx) {
 
   generateMap(seed);
   spawnStart();
+  showMsg(`Biome: ${currentBiomeName}`, 4);
 
   // Focus camera on own base
   const myBase = getBase(myP);
