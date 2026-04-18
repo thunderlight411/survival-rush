@@ -13,6 +13,10 @@
     <div class="lobby-box">
       <h1>⚔️ War Game</h1>
       <p id="lobby-status">Verbinden met server…</p>
+      <div id="player-profile">
+        <label for="player-name">Naam</label>
+        <input id="player-name" type="text" maxlength="16" placeholder="Jouw naam" />
+      </div>
       <div id="lobby-actions">
         <button id="play-online-auto" class="lobby-btn">Automatisch Matchen</button>
         <div id="room-join-wrap">
@@ -25,6 +29,11 @@
       <div id="room-info" style="display:none">
         <p>Kamer: <strong id="room-id"></strong></p>
         <p id="waiting-msg">Wachten op tegenstander…</p>
+      </div>
+      <div id="ranked-panel">
+        <p id="my-rating">Rating: 1000 (W0-L0)</p>
+        <h3>Top 10</h3>
+        <ol id="leaderboard-list"></ol>
       </div>
       <div id="rules">
         <h3>Hoe te spelen</h3>

@@ -229,6 +229,12 @@ let belastingCd = [0, 0];
 let plunderCd   = [0, 0];
 let aiThinkTimer = 0;
 let aiAttackTimer = 0;
+let playerProfileId = '';
+let playerName = 'Speler';
+let playerRating = 1000;
+let playerWins = 0;
+let playerLosses = 0;
+let leaderboardRows = [];
 
 // Camera
 let camX = 0, camY = 0;
@@ -448,8 +454,8 @@ function update(dt) {
   }
 
   // ─ Win condition
-  if (!getBase(0)) { winner = 1; running = false; }
-  if (!getBase(1)) { winner = 0; running = false; }
+  if (!getBase(0)) finalizeGame(1);
+  if (!getBase(1)) finalizeGame(0);
 
   if (gameMode === 'ai' && running) {
     updateAI(dt);
@@ -820,6 +826,213 @@ function findBuildSpot(player, btype) {
 }
 
 function showMsg(msg, dur = 3) { gameMsg = msg; msgTimer = dur; }
+
+function sanitizePlayerName(raw) {
+  const clean = (raw || '').replace(/[^A-Za-z0-9 _\-]/g, '').trim();
+  return clean.slice(0, 16) || 'Speler';
+}
+
+function ensureLocalProfile() {
+  try {
+    let pid = localStorage.getItem('wg_profile_id') || '';
+    if (!pid) {
+      pid = `p_${Date.now().toString(36)}_${((Math.random() * 1e8) | 0).toString(36)}`;
+      localStorage.setItem('wg_profile_id', pid);
+    }
+    playerProfileId = pid;
+
+    const storedName = sanitizePlayerName(localStorage.getItem('wg_player_name') || '');
+    playerName = storedName;
+  } catch (_err) {
+    playerProfileId = `p_${Date.now().toString(36)}_${((Math.random() * 1e8) | 0).toString(36)}`;
+    playerName = 'Speler';
+  }
+
+  const nameInput = document.getElementById('player-name');
+  if (nameInput) {
+    nameInput.value = playerName;
+    nameInput.addEventListener('input', () => {
+      nameInput.value = sanitizePlayerName(nameInput.value);
+    });
+    const saveName = () => {
+      playerName = sanitizePlayerName(nameInput.value);
+      nameInput.value = playerName;
+      try { localStorage.setItem('wg_player_name', playerName); } catch (_err) {}
+      updateMyRatingBadge();
+    };
+    nameInput.addEventListener('blur', saveName);
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      saveName();
+    });
+  }
+
+  updateMyRatingBadge();
+}
+
+function updateMyRatingBadge() {
+  const badge = document.getElementById('my-rating');
+  if (!badge) return;
+  badge.textContent = `${playerName} - Rating: ${playerRating} (W${playerWins}-L${playerLosses})`;
+}
+
+function renderLeaderboard() {
+  const list = document.getElementById('leaderboard-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const rows = leaderboardRows.slice(0, 10);
+  if (!rows.length) {
+    const li = document.createElement('li');
+    li.textContent = 'Nog geen ranked matches';
+    list.appendChild(li);
+    return;
+  }
+  rows.forEach((row, i) => {
+    const li = document.createElement('li');
+    const nm = sanitizePlayerName(row.name || 'Speler');
+    const rt = Number.isFinite(row.rating) ? Math.round(row.rating) : 1000;
+    const w = Number.isFinite(row.wins) ? row.wins : 0;
+    const l = Number.isFinite(row.losses) ? row.losses : 0;
+    li.textContent = `${i + 1}. ${nm} - ${rt} (${w}-${l})`;
+    list.appendChild(li);
+  });
+}
+
+function calcEloDelta(rA, rB, scoreA, k = 24) {
+  const expectA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
+  return Math.round(k * (scoreA - expectA));
+}
+
+function finalizeGame(winnerIdx) {
+  if (!running) return;
+  winner = winnerIdx;
+  running = false;
+  submitOnlineMatchResult();
+}
+
+function loadMyRatingFromFirebase() {
+  if (!firebaseDb || !playerProfileId) return;
+  const myRef = firebaseDb.ref(`rooms/_global/ratings/${playerProfileId}`);
+  myRef.once('value').then((snap) => {
+    const cur = snap.val();
+    if (!cur) {
+      myRef.set({
+        name: playerName,
+        rating: 1000,
+        wins: 0,
+        losses: 0,
+        updatedAt: firebase.database.ServerValue.TIMESTAMP,
+      });
+      playerRating = 1000;
+      playerWins = 0;
+      playerLosses = 0;
+      updateMyRatingBadge();
+      return;
+    }
+    playerRating = Number.isFinite(cur.rating) ? Math.round(cur.rating) : 1000;
+    playerWins = Number.isFinite(cur.wins) ? cur.wins : 0;
+    playerLosses = Number.isFinite(cur.losses) ? cur.losses : 0;
+    updateMyRatingBadge();
+  }).catch(() => {});
+}
+
+function subscribeLeaderboard() {
+  if (!firebaseDb) return;
+  const lbRef = firebaseDb.ref('rooms/_global/ratings').orderByChild('rating').limitToLast(10);
+  lbRef.on('value', (snap) => {
+    const rows = [];
+    snap.forEach((child) => {
+      const row = child.val() || {};
+      rows.push({
+        pid: child.key,
+        name: sanitizePlayerName(row.name || 'Speler'),
+        rating: Number.isFinite(row.rating) ? Math.round(row.rating) : 1000,
+        wins: Number.isFinite(row.wins) ? row.wins : 0,
+        losses: Number.isFinite(row.losses) ? row.losses : 0,
+      });
+    });
+    rows.sort((a, b) => b.rating - a.rating);
+    leaderboardRows = rows;
+    renderLeaderboard();
+  });
+}
+
+function submitOnlineMatchResult() {
+  if (gameMode !== 'online' || !firebaseDb || !firebaseRoomRef || !firebaseRoomId) return;
+  if (matchResultSubmitted || winner === null) return;
+  if (!Array.isArray(firebaseRoomPlayers) || firebaseRoomPlayers.length < 2) return;
+
+  const p0 = firebaseRoomPlayers[0];
+  const p1 = firebaseRoomPlayers[1];
+  if (!p0 || !p1 || !p0.pid || !p1.pid) return;
+
+  const winnerPlayer = winner === 0 ? p0 : p1;
+  const loserPlayer = winner === 0 ? p1 : p0;
+
+  matchResultSubmitted = true;
+  const resultRef = firebaseRoomRef.child('result');
+  resultRef.transaction((cur) => {
+    if (cur) return cur;
+    return {
+      winnerPid: winnerPlayer.pid,
+      loserPid: loserPlayer.pid,
+      winnerName: winnerPlayer.name || 'Speler',
+      loserName: loserPlayer.name || 'Speler',
+      createdAt: Date.now(),
+    };
+  }, (err, committed) => {
+    if (err || !committed) {
+      matchResultSubmitted = false;
+      return;
+    }
+
+    const ratingsRef = firebaseDb.ref('rooms/_global/ratings');
+    Promise.all([
+      ratingsRef.child(winnerPlayer.pid).once('value'),
+      ratingsRef.child(loserPlayer.pid).once('value'),
+    ]).then(([wSnap, lSnap]) => {
+      const wCur = wSnap.val() || {};
+      const lCur = lSnap.val() || {};
+      const wRating = Number.isFinite(wCur.rating) ? Math.round(wCur.rating) : 1000;
+      const lRating = Number.isFinite(lCur.rating) ? Math.round(lCur.rating) : 1000;
+      const wDelta = calcEloDelta(wRating, lRating, 1);
+      const lDelta = -wDelta;
+
+      const updates = {};
+      updates[`rooms/_global/ratings/${winnerPlayer.pid}`] = {
+        name: sanitizePlayerName(winnerPlayer.name || wCur.name || 'Speler'),
+        rating: wRating + wDelta,
+        wins: (Number.isFinite(wCur.wins) ? wCur.wins : 0) + 1,
+        losses: Number.isFinite(wCur.losses) ? wCur.losses : 0,
+        updatedAt: firebase.database.ServerValue.TIMESTAMP,
+      };
+      updates[`rooms/_global/ratings/${loserPlayer.pid}`] = {
+        name: sanitizePlayerName(loserPlayer.name || lCur.name || 'Speler'),
+        rating: Math.max(100, lRating + lDelta),
+        wins: Number.isFinite(lCur.wins) ? lCur.wins : 0,
+        losses: (Number.isFinite(lCur.losses) ? lCur.losses : 0) + 1,
+        updatedAt: firebase.database.ServerValue.TIMESTAMP,
+      };
+      return firebaseDb.ref().update(updates).then(() => ({ wDelta, lDelta }));
+    }).then((deltaObj) => {
+      if (!deltaObj) return;
+      const myPid = playerProfileId;
+      if (myPid === winnerPlayer.pid) {
+        playerRating += deltaObj.wDelta;
+        playerWins += 1;
+        showMsg(`Ranked: +${deltaObj.wDelta} rating`, 8);
+      } else if (myPid === loserPlayer.pid) {
+        playerRating = Math.max(100, playerRating + deltaObj.lDelta);
+        playerLosses += 1;
+        showMsg(`Ranked: ${deltaObj.lDelta} rating`, 8);
+      }
+      updateMyRatingBadge();
+    }).catch(() => {
+      matchResultSubmitted = false;
+    });
+  }, false);
+}
 
 // ── Rendering ──────────────────────────────────────────────
 function render() {
@@ -1379,11 +1592,14 @@ let firebasePlayersRef = null;
 let firebaseCmdsRef = null;
 let firebaseOpenRef = null;
 let firebaseAssignRef = null;
+let firebaseRoomRef = null;
+let firebaseRoomPlayers = [];
 let firebasePlayersHandler = null;
 let firebaseCmdHandler = null;
 let firebaseOpenHandler = null;
 let firebaseAssignHandler = null;
 let firebaseAutoResolving = false;
+let matchResultSubmitted = false;
 
 function ensureFirebaseClient() {
   if (typeof firebase === 'undefined' || !window.FIREBASE_CONFIG) return false;
@@ -1426,6 +1642,8 @@ function cleanupFirebaseRealtime(removePresence = true) {
   }
 
   firebaseRoomId = '';
+  firebaseRoomRef = null;
+  firebaseRoomPlayers = [];
   firebasePresenceRef = null;
   firebasePlayersRef = null;
   firebaseCmdsRef = null;
@@ -1436,6 +1654,7 @@ function cleanupFirebaseRealtime(removePresence = true) {
   firebaseOpenHandler = null;
   firebaseAssignHandler = null;
   firebaseAutoResolving = false;
+  matchResultSubmitted = false;
 }
 
 function startAIGame() {
@@ -1520,11 +1739,18 @@ function connectFirebaseRoom(roomId, waitText) {
   firebaseRoomId = roomId;
 
   const roomRef = firebaseDb.ref(`rooms/${roomId}`);
+  firebaseRoomRef = roomRef;
+  firebaseRoomPlayers = [];
+  matchResultSubmitted = false;
   firebasePlayersRef = roomRef.child('players');
   firebaseCmdsRef = roomRef.child('cmds');
   firebasePresenceRef = firebasePlayersRef.child(firebaseClientId);
 
-  firebasePresenceRef.set({ joinedAt: firebase.database.ServerValue.TIMESTAMP });
+  firebasePresenceRef.set({
+    joinedAt: firebase.database.ServerValue.TIMESTAMP,
+    name: playerName,
+    pid: playerProfileId,
+  });
   firebasePresenceRef.onDisconnect().remove();
 
   roomRef.child('seed').transaction(cur => cur || (((Date.now() ^ (Math.random() * 1000000)) >>> 0) || 1337));
@@ -1553,6 +1779,13 @@ function connectFirebaseRoom(roomId, waitText) {
     const ids = Object.keys(players)
       .sort((a, b) => (players[a].joinedAt || 0) - (players[b].joinedAt || 0));
     const idx = ids.indexOf(firebaseClientId);
+    firebaseRoomPlayers = ids.slice(0, 2).map((id, slot) => ({
+      clientId: id,
+      slot,
+      pid: players[id] && players[id].pid ? players[id].pid : '',
+      name: players[id] && players[id].name ? players[id].name : 'Speler',
+      joinedAt: players[id] && players[id].joinedAt ? players[id].joinedAt : 0,
+    }));
 
     document.getElementById('room-id').textContent = roomId;
     document.getElementById('room-info').style.display = 'block';
@@ -1575,8 +1808,7 @@ function connectFirebaseRoom(roomId, waitText) {
     if (ids.length < 2) {
       if (running) {
         showMsg('De tegenstander heeft de verbinding verbroken.', 10);
-        winner = myP;
-        running = false;
+        finalizeGame(myP);
       } else {
         document.getElementById('waiting-msg').textContent = waitText;
       }
@@ -1695,6 +1927,8 @@ function initNetwork() {
     document.getElementById('online-badge').textContent = 'Serverloze multiplayer via Firebase';
     document.getElementById('lobby-status').textContent =
       'Kies: Automatisch Matchen of Join met Kamercode.';
+    loadMyRatingFromFirebase();
+    subscribeLeaderboard();
 
     const hashRoom = sanitizeRoomCode((window.location.hash || '').replace('#', '').trim());
     const codeInput = document.getElementById('room-code-input');
@@ -1755,6 +1989,7 @@ window.addEventListener('DOMContentLoaded', () => {
   miniCanvas  = document.getElementById('minimap');
   miniCtx     = miniCanvas.getContext('2d');
 
+  ensureLocalProfile();
   initLobbyActions();
   initInput();
   initNetwork();

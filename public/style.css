@@ -32,6 +32,30 @@ body {
 .lobby-box h1 { font-size: 2.6rem; margin-bottom: 12px; }
 .lobby-box p  { color: #aac; margin-bottom: 8px; }
 
+#player-profile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+
+#player-profile label {
+  color: #a9b8de;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+#player-name {
+  background: #12182d;
+  border: 1px solid #4e659d;
+  color: #dbe6ff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  width: 170px;
+}
+
 #lobby-actions {
   margin: 10px 0 6px;
   display: flex;
@@ -92,6 +116,40 @@ body {
 }
 
 #room-info strong { color: #4af; font-size: 1.2rem; }
+
+#ranked-panel {
+  margin-top: 12px;
+  text-align: left;
+  background: #121b2f;
+  border: 1px solid #243454;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+#my-rating {
+  color: #d5e3ff;
+  font-size: 0.84rem;
+  margin-bottom: 6px;
+}
+
+#ranked-panel h3 {
+  color: #8fb6ff;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+}
+
+#leaderboard-list {
+  margin: 0;
+  padding-left: 22px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+#leaderboard-list li {
+  color: #c7d5f7;
+  font-size: 0.8rem;
+  margin-bottom: 3px;
+}
 
 #rules {
   margin-top: 20px;
