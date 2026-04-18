@@ -997,16 +997,51 @@ function subscribeLeaderboard() {
 function submitOnlineMatchResult() {
   if (gameMode !== 'online' || !firebaseDb || !firebaseRoomRef || !firebaseRoomId) return;
   if (matchResultSubmitted || winner === null) return;
-  if (!Array.isArray(firebaseRoomPlayers) || firebaseRoomPlayers.length < 2) return;
 
-  const p0 = firebaseRoomPlayers[0];
-  const p1 = firebaseRoomPlayers[1];
+  // Use cached room players if available, otherwise fetch from Firebase
+  let p0, p1;
+  
+  if (Array.isArray(firebaseRoomPlayers) && firebaseRoomPlayers.length >= 2) {
+    p0 = firebaseRoomPlayers[0];
+    p1 = firebaseRoomPlayers[1];
+  } else {
+    // Fallback: try to get the 2 most recent joiners from Firebase
+    firebaseDb.ref(`rooms/${firebaseRoomId}/players`).once('value').then((snap) => {
+      const players = snap.val() || {};
+      const ids = Object.keys(players)
+        .sort((a, b) => (players[a].joinedAt || 0) - (players[b].joinedAt || 0));
+      
+      if (ids.length < 2) return;
+      
+      const p0Data = players[ids[0]];
+      const p1Data = players[ids[1]];
+      
+      if (!p0Data || !p1Data || !p0Data.pid || !p1Data.pid) return;
+      
+      // Now call the actual submission with these players
+      submitRankedResult({
+        pid: p0Data.pid,
+        name: sanitizePlayerName(p0Data.name || 'Speler'),
+      }, {
+        pid: p1Data.pid,
+        name: sanitizePlayerName(p1Data.name || 'Speler'),
+      }, winner);
+    }).catch(() => {});
+    
+    return;
+  }
+  
   if (!p0 || !p1 || !p0.pid || !p1.pid) return;
 
   const winnerPlayer = winner === 0 ? p0 : p1;
   const loserPlayer = winner === 0 ? p1 : p0;
+  submitRankedResult(winnerPlayer, loserPlayer, winner);
+}
 
+function submitRankedResult(winnerPlayer, loserPlayer, winnerIdx) {
+  if (matchResultSubmitted) return;
   matchResultSubmitted = true;
+  
   const resultRef = firebaseRoomRef.child('result');
   resultRef.transaction((cur) => {
     if (cur) return cur;
