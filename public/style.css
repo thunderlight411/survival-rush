@@ -1,0 +1,200 @@
+/* ── Reset & base ───────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0d0d1a;
+  color: #eee;
+  font-family: 'Segoe UI', sans-serif;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ── Lobby ──────────────────────────────────────────────── */
+#lobby {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+}
+
+.lobby-box {
+  background: #1a1a2e;
+  border: 1px solid #334;
+  border-radius: 12px;
+  padding: 40px 48px;
+  max-width: 500px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+
+.lobby-box h1 { font-size: 2.6rem; margin-bottom: 12px; }
+.lobby-box p  { color: #aac; margin-bottom: 8px; }
+
+#lobby-actions {
+  margin: 10px 0 6px;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lobby-btn {
+  background: #26314f;
+  border: 1px solid #5f7bc0;
+  color: #dbe6ff;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.lobby-btn:hover { background: #334670; }
+.lobby-btn:active { transform: translateY(1px); }
+.lobby-btn.alt {
+  background: #4a2f18;
+  border-color: #d48b32;
+  color: #ffe2b8;
+}
+.lobby-btn.alt:hover { background: #654122; }
+
+#online-badge {
+  margin: 6px auto 2px;
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #5a4c2f;
+  background: #2a2416;
+  color: #f2d59d;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+#room-info strong { color: #4af; font-size: 1.2rem; }
+
+#rules {
+  margin-top: 20px;
+  text-align: left;
+  background: #111120;
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+#rules h3 { color: #88aaff; margin-bottom: 8px; }
+#rules ul  { padding-left: 18px; }
+#rules li  { color: #aac; font-size: 0.85rem; margin-bottom: 4px; line-height: 1.5; }
+
+/* ── Game screen ────────────────────────────────────────── */
+#game-screen {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* Top HUD */
+#hud-top {
+  height: 44px;
+  background: #111120;
+  border-bottom: 1px solid #334;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+.hud-side { display: flex; align-items: center; gap: 6px; font-size: 0.95rem; }
+#hud-center { font-size: 1rem; color: #ffdd44; font-weight: bold; }
+
+.dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot.blue { background: #4488ff; }
+.dot.red  { background: #ff4444; }
+
+/* Canvas */
+#canvas {
+  flex: 1;
+  display: block;
+  cursor: crosshair;
+}
+
+/* Bottom panel */
+#bottom-panel {
+  background: #111120;
+  border-top: 1px solid #334;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+#bottom-top {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  gap: 12px;
+  min-height: 72px;
+  border-bottom: 1px solid #1e1e38;
+}
+
+#sel-info {
+  width: 190px;
+  flex-shrink: 0;
+}
+#entity-name { font-weight: bold; color: #cde; font-size: 0.88rem; }
+#entity-hp   { color: #aab; font-size: 0.78rem; margin-top: 2px; }
+#train-queue { color: #88aaff; font-size: 0.72rem; margin-top: 2px; }
+
+#action-btns {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-content: center;
+}
+
+#eco-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  padding: 5px 12px;
+  min-height: 36px;
+}
+
+.action-btn {
+  background: #223;
+  color: #dde;
+  border: 1px solid #445;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.action-btn:hover   { background: #334; }
+.action-btn:active  { background: #445; }
+.action-btn.build   { border-color: #4a8; color: #8fc; }
+.action-btn.train   { border-color: #48f; color: #8af; }
+.action-btn.cancel  { border-color: #f44; color: #f88; }
+.action-btn.econ    { border-color: #cc9a2a; color: #ffd978; }
+
+/* Minimap */
+#minimap-wrap {
+  flex-shrink: 0;
+  border: 1px solid #334;
+  border-radius: 4px;
+  overflow: hidden;
+}
+#minimap {
+  width: 140px;
+  height: 62px;
+  display: block;
+}

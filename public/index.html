@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>War Game</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Lobby ─────────────────────────────────────────────── -->
+  <div id="lobby">
+    <div class="lobby-box">
+      <h1>⚔️ War Game</h1>
+      <p id="lobby-status">Verbinden met server…</p>
+      <div id="lobby-actions">
+        <button id="play-ai" class="lobby-btn">Speel Tegen AI</button>
+        <button id="play-survival" class="lobby-btn alt">Speel Survival Rush</button>
+      </div>
+      <div id="online-badge">Online multiplayer vereist eigen server (Socket.io)</div>
+      <div id="room-info" style="display:none">
+        <p>Kamer: <strong id="room-id"></strong></p>
+        <p id="waiting-msg">Wachten op tegenstander…</p>
+      </div>
+      <div id="rules">
+        <h3>Hoe te spelen</h3>
+        <ul>
+          <li>Klik om eenheden te selecteren, sleep voor meerdere</li>
+          <li><b>Rechtermuisknop</b> op grond = bewegen</li>
+          <li><b>Rechtermuisknop</b> op vijand = aanvallen</li>
+          <li>Selecteer een Werker voor bouwopties</li>
+          <li>Selecteer een gebouw om eenheden te trainen</li>
+          <li>Gebruik Artillerieaanval onderin voor area damage (kost goud + cooldown)</li>
+          <li>Nieuwe tactische opties: Gevechtsboost, Huurlingen en Reparatieveld</li>
+          <li>Geen tegenstander? Klik op "Speel Tegen AI" in de lobby</li>
+          <li>Voor een snellere, wave-based modus: kies "Speel Survival Rush"</li>
+          <li>WASD / Pijltjestoetsen = camera scrollen</li>
+          <li><b>Doel:</b> Vernietig het vijandelijk Hoofdkwartier!</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Game screen ──────────────────────────────────────── -->
+  <div id="game-screen" style="display:none">
+
+    <!-- Top HUD bar -->
+    <div id="hud-top">
+      <div class="hud-side" id="hud-left">
+        <span class="dot blue"></span>
+        <span>Blauw &nbsp;💰 <span id="gold-0">200</span></span>
+        <span>&nbsp; 👥 <span id="pop-0">3</span>/20</span>
+        <span>&nbsp; 📈 <span id="income-0">0</span>/s</span>
+      </div>
+      <div id="hud-center"><span id="game-msg"></span></div>
+      <div class="hud-side" id="hud-right">
+        <span>Rood &nbsp;💰 <span id="gold-1">200</span></span>
+        <span>&nbsp; 👥 <span id="pop-1">3</span>/20</span>
+        <span>&nbsp; 📈 <span id="income-1">0</span>/s</span>
+        <span class="dot red"></span>
+      </div>
+    </div>
+
+    <!-- Canvas -->
+    <canvas id="canvas"></canvas>
+
+    <!-- Bottom panel -->
+    <div id="bottom-panel">
+      <div id="bottom-top">
+        <div id="sel-info">
+          <div id="entity-name">Niets geselecteerd</div>
+          <div id="entity-hp"></div>
+          <div id="train-queue"></div>
+        </div>
+        <div id="action-btns"></div>
+        <div id="minimap-wrap">
+          <canvas id="minimap"></canvas>
+        </div>
+      </div>
+      <div id="eco-btns"></div>
+    </div>
+
+  </div>
+
+  <script src="socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
