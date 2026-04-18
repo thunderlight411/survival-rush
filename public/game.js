@@ -1378,9 +1378,12 @@ let firebasePresenceRef = null;
 let firebasePlayersRef = null;
 let firebaseCmdsRef = null;
 let firebaseOpenRef = null;
+let firebaseAssignRef = null;
 let firebasePlayersHandler = null;
 let firebaseCmdHandler = null;
 let firebaseOpenHandler = null;
+let firebaseAssignHandler = null;
+let firebaseAutoResolving = false;
 
 function ensureFirebaseClient() {
   if (typeof firebase === 'undefined' || !window.FIREBASE_CONFIG) return false;
@@ -1408,6 +1411,9 @@ function cleanupFirebaseRealtime(removePresence = true) {
   if (firebaseOpenRef && firebaseOpenHandler) {
     firebaseOpenRef.off('value', firebaseOpenHandler);
   }
+  if (firebaseAssignRef && firebaseAssignHandler) {
+    firebaseAssignRef.off('value', firebaseAssignHandler);
+  }
 
   if (removePresence && firebasePresenceRef) {
     firebasePresenceRef.remove();
@@ -1415,15 +1421,21 @@ function cleanupFirebaseRealtime(removePresence = true) {
   if (removePresence && firebaseOpenRef && firebaseClientId) {
     firebaseOpenRef.child(firebaseClientId).remove();
   }
+  if (removePresence && firebaseAssignRef) {
+    firebaseAssignRef.remove();
+  }
 
   firebaseRoomId = '';
   firebasePresenceRef = null;
   firebasePlayersRef = null;
   firebaseCmdsRef = null;
   firebaseOpenRef = null;
+  firebaseAssignRef = null;
   firebasePlayersHandler = null;
   firebaseCmdHandler = null;
   firebaseOpenHandler = null;
+  firebaseAssignHandler = null;
+  firebaseAutoResolving = false;
 }
 
 function startAIGame() {
@@ -1610,11 +1622,24 @@ function startFirebaseAutoMatch() {
   window.location.hash = '';
 
   firebaseOpenRef = firebaseDb.ref('matchmaking/open');
+  firebaseAssignRef = firebaseDb.ref(`matchmaking/assignments/${firebaseClientId}`);
+
   firebaseOpenRef.child(firebaseClientId).set({ joinedAt: firebase.database.ServerValue.TIMESTAMP });
   firebaseOpenRef.child(firebaseClientId).onDisconnect().remove();
+  firebaseAssignRef.onDisconnect().remove();
+
+  firebaseAssignHandler = (snap) => {
+    if (gameMode !== 'online' || running || firebaseRoomId) return;
+    const assignedRoom = sanitizeRoomCode(snap.val() || '');
+    if (!assignedRoom) return;
+    window.location.hash = assignedRoom;
+    firebaseAssignRef.remove();
+    connectFirebaseRoom(assignedRoom, 'Automatch actief… wacht op synchronisatie.');
+  };
+  firebaseAssignRef.on('value', firebaseAssignHandler);
 
   firebaseOpenHandler = (snap) => {
-    if (gameMode !== 'online' || running || firebaseRoomId) return;
+    if (gameMode !== 'online' || running || firebaseRoomId || firebaseAutoResolving) return;
     const waiting = snap.val() || {};
     const oppIds = Object.keys(waiting)
       .filter(id => id !== firebaseClientId)
@@ -1622,13 +1647,27 @@ function startFirebaseAutoMatch() {
 
     if (!oppIds.length) return;
 
-    const roomId = makeAutoRoomId(firebaseClientId, oppIds[0]);
-    firebaseOpenRef.off('value', firebaseOpenHandler);
-    firebaseOpenHandler = null;
-    firebaseOpenRef.child(firebaseClientId).remove();
-    firebaseOpenRef.child(oppIds[0]).remove();
-    window.location.hash = roomId;
-    connectFirebaseRoom(roomId, 'Automatch actief… wacht op synchronisatie.');
+    firebaseAutoResolving = true;
+    const oppId = oppIds[0];
+    const claimRef = firebaseDb.ref(`matchmaking/claims/${oppId}`);
+
+    claimRef.transaction(cur => cur || firebaseClientId, (err, committed, claimSnap) => {
+      if (err || !committed || !claimSnap || claimSnap.val() !== firebaseClientId) {
+        firebaseAutoResolving = false;
+        return;
+      }
+
+      const roomId = makeAutoRoomId(firebaseClientId, oppId);
+      firebaseDb.ref('matchmaking').update({
+        [`assignments/${firebaseClientId}`]: roomId,
+        [`assignments/${oppId}`]: roomId,
+        [`open/${firebaseClientId}`]: null,
+        [`open/${oppId}`]: null,
+        [`claims/${oppId}`]: null,
+      }).finally(() => {
+        firebaseAutoResolving = false;
+      });
+    }, false);
   };
 
   firebaseOpenRef.on('value', firebaseOpenHandler);
