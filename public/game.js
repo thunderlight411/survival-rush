@@ -463,7 +463,9 @@ function update(dt) {
 
   if (gameMode === 'ai' && running) {
     updateAI(dt);
-  }Disconnect timeout: if opponent doesn't reconnect in 10s, auto-lose
+  }
+
+  // ─ Disconnect timeout: if opponent doesn't reconnect in 10s, auto-lose
   if (running && gameMode === 'online' && disconnectTimer > 0) {
     disconnectTimer -= dt;
     if (disconnectTimer <= 0) {
