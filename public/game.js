@@ -237,6 +237,10 @@ let playerLosses = 0;
 let leaderboardRows = [];
 let disconnectTimer = 0;     // Time left for opponent to reconnect (0 = not disconnected)
 let disconnectingPlayer = -1; // Which player is disconnected (-1 = none)
+let fogEnabled = true;        // Fog of war on/off
+let fogTiles = null;          // Set of "tx,ty" strings visible to myP this frame
+let rematchRequested = false; // This client requested rematch
+let rematchListening = false; // Already listening for rematch
 
 // Camera
 let camX = 0, camY = 0;
@@ -290,6 +294,9 @@ function initGame(seed, playerIdx) {
   lastTimestamp = 0;
   disconnectTimer = 0;
   disconnectingPlayer = -1;
+  fogTiles = null;
+  rematchRequested = false;
+  rematchListening = false;
   ents    = {};
   idCnt   = [0, 0];
   sel.clear();
@@ -845,6 +852,40 @@ function findBuildSpot(player, btype) {
 
 function showMsg(msg, dur = 3) { gameMsg = msg; msgTimer = dur; }
 
+// Vision radius per type (in tiles)
+const VISION_R = {
+  [WORKER]: 5, [SOLDIER]: 6, [ARCHER]: 7,
+  [BASE]: 8, [BARRACKS]: 5, [TOWER]: 7, [MARKET]: 4, [WALL]: 3,
+};
+
+function computeFog(p) {
+  if (!fogEnabled || !running || myP === -1) return null;
+  const visible = new Set();
+  for (const e of playerEnts(p)) {
+    const r = VISION_R[e.type] || 5;
+    const cx = (e.x / TS) | 0;
+    const cy = (e.y / TS) | 0;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r) continue;
+        const tx = cx + dx, ty = cy + dy;
+        if (tx >= 0 && tx < MW && ty >= 0 && ty < MH) visible.add(`${tx},${ty}`);
+      }
+    }
+  }
+  return visible;
+}
+
+function tileVisible(tx, ty) {
+  return !fogTiles || fogTiles.has(`${tx},${ty}`);
+}
+
+function entVisible(e) {
+  if (!fogTiles || e.player === myP) return true;
+  const tx = (e.x / TS) | 0, ty = (e.y / TS) | 0;
+  return fogTiles.has(`${tx},${ty}`);
+}
+
 function returnToLobby() {
   cleanupFirebaseRealtime(true);
   if (net && net.disconnect) net.disconnect();
@@ -855,12 +896,41 @@ function returnToLobby() {
   buildMode = null;
   wallStartTile = null;
   strikeMode = false;
+  rematchRequested = false;
+  rematchListening = false;
   document.getElementById('game-screen').style.display = 'none';
   document.getElementById('lobby').style.display = 'flex';
   document.getElementById('room-info').style.display = 'none';
   document.getElementById('room-code-input').value = '';
   loadMyRatingFromFirebase();
   subscribeLeaderboard();
+}
+
+function requestRematch() {
+  if (gameMode !== 'online' || !firebaseDb || !firebaseRoomRef) return;
+  rematchRequested = true;
+  firebaseRoomRef.child(`rematch/${firebaseClientId}`).set(firebase.database.ServerValue.TIMESTAMP);
+  showMsg('Rematch gevraagd – wachten op tegenstander…', 60);
+}
+
+function listenForRematch() {
+  if (rematchListening || !firebaseRoomRef) return;
+  rematchListening = true;
+  firebaseRoomRef.child('rematch').on('value', snap => {
+    if (running || winner === null) return; // game still going
+    const votes = Object.keys(snap.val() || {});
+    if (votes.length >= 2) {
+      // Both players ready – start new game in same room
+      firebaseRoomRef.child('rematch').remove();
+      matchResultSubmitted = false;
+      rematchRequested = false;
+      rematchListening = false;
+      const newSeed = (((Date.now() ^ (Math.random() * 1e6)) >>> 0) || 1337);
+      firebaseRoomRef.child('seed').set(newSeed).then(() => {
+        initGame(newSeed, myPending !== undefined ? myPending : myP);
+      });
+    }
+  });
 }
 
 function sanitizePlayerName(raw) {
@@ -1112,6 +1182,9 @@ function render() {
   ctx.fillStyle = '#1a1a2e';
   ctx.fillRect(0, 0, W, H);
 
+  // Recompute fog every frame
+  fogTiles = computeFog(myP);
+
   // ─ Tiles
   const tx0 = Math.max(0, (camX / TS) | 0);
   const ty0 = Math.max(0, (camY / TS) | 0);
@@ -1128,6 +1201,18 @@ function render() {
       ctx.strokeStyle = 'rgba(0,0,0,0.18)';
       ctx.lineWidth = 0.5;
       ctx.strokeRect(sx, sy, TS, TS);
+    }
+  }
+
+  // ─ Fog of war overlay
+  if (fogTiles && running) {
+    ctx.fillStyle = 'rgba(0,0,0,0.68)';
+    for (let ty = ty0; ty < ty1; ty++) {
+      for (let tx = tx0; tx < tx1; tx++) {
+        if (!fogTiles.has(`${tx},${ty}`)) {
+          ctx.fillRect(tx * TS - camX, ty * TS - camY, TS, TS);
+        }
+      }
     }
   }
 
@@ -1165,6 +1250,7 @@ function render() {
 
   // ─ Entities
   for (const e of allEnts()) {
+    if (!entVisible(e)) continue;   // hide enemies in fog
     const d  = DEF[e.type];
     const sx = e.x - camX;
     const sy = e.y - camY;
@@ -1251,11 +1337,21 @@ function render() {
     ctx.font = 'bold 72px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(isWin ? '🏆 OVERWINNING!' : '💀 VERLOREN', W / 2, H / 2 - 24);
     ctx.fillStyle = '#ccc'; ctx.font = '22px Arial';
-    ctx.fillText('Klik op de knop om terug naar lobby te gaan', W / 2, H / 2 + 30);
-    // Draw button
+    if (rematchRequested) {
+      ctx.fillText('Wachten op tegenstander voor rematch...', W / 2, H / 2 + 30);
+    } else {
+      ctx.fillText('Kies een optie hieronder', W / 2, H / 2 + 30);
+    }
+    // Rematch button (only online mode)
+    if (gameMode === 'online' && !rematchRequested) {
+      ctx.fillStyle = '#22aa55';
+      ctx.font = 'bold 20px Arial';
+      ctx.fillText('[ REMATCH ]', W / 2 - 120, H - 40);
+    }
+    // Lobby button
     ctx.fillStyle = '#4488ff';
-    ctx.font = 'bold 18px Arial';
-    ctx.fillText('[ TERUG NAAR LOBBY ]', W / 2, H - 40);
+    ctx.font = 'bold 20px Arial';
+    ctx.fillText('[ TERUG NAAR LOBBY ]', W / 2 + 80, H - 40);
   }
 
   // ─ Minimap
@@ -1279,8 +1375,9 @@ function renderMinimap() {
       miniCtx.fillStyle = TILE_DARK[mapTiles[ty][tx]];
       miniCtx.fillRect(tx * sx, ty * sy, sx + 0.5, sy + 0.5);
     }
-  // Entities
+  // Entities on minimap: hide enemy units in fog
   for (const e of allEnts()) {
+    if (!entVisible(e)) continue;
     miniCtx.fillStyle = P_COLOR[e.player];
     miniCtx.fillRect(e.x / TS * sx - 1, e.y / TS * sy - 1, 3, 3);
   }
@@ -1521,9 +1618,24 @@ function onMouseDown(e) {
   const w  = screenToWorld(sx, sy);
   mouseWorld = w;
 
-  // Game over click to return to lobby
+  // Game over click: route to rematch or lobby
   if (!running && winner !== null) {
-    returnToLobby();
+    const r2 = canvas.getBoundingClientRect();
+    const cx2 = e.clientX - r2.left;
+    const cy2 = e.clientY - r2.top;
+    const H2 = canvas.height;
+    const W2 = canvas.width;
+    const btnY = H2 - 40;
+    const rematchX = W2 / 2 - 120;
+    const lobbyX   = W2 / 2 + 80;
+    // Rematch button zone: rematchX ± 80, btnY ± 18
+    if (gameMode === 'online' && !rematchRequested &&
+        cx2 >= rematchX - 80 && cx2 <= rematchX + 80 &&
+        cy2 >= btnY - 18 && cy2 <= btnY + 18) {
+      requestRematch();
+    } else {
+      returnToLobby();
+    }
     return;
   }
 
@@ -1920,6 +2032,7 @@ function connectFirebaseRoom(roomId, waitText) {
         if (gameMode !== 'online' || running) return;
         const seed = seedSnap.val() || 1337;
         initGame(seed, myPending);
+        listenForRematch();
       });
     }
   };
@@ -2062,6 +2175,7 @@ function initNetwork() {
   net.on('game_start', ({ seed }) => {
     if (gameMode !== 'online') return;
     initGame(seed, myPending);
+    listenForRematch();
   });
 
   net.on('cmd', (cmd) => {
