@@ -324,21 +324,20 @@ function initGame(seed, playerIdx) {
 
 function spawnStart() {
   // Four possible corner zones (tile coords for the base top-left corner)
-  const margin = 4; // tiles from edge
+  const margin = 4;
   const corners = [
-    { x: margin,          y: margin },           // top-left
-    { x: MW - margin - 2, y: margin },           // top-right
-    { x: margin,          y: MH - margin - 2 },  // bottom-left
-    { x: MW - margin - 2, y: MH - margin - 2 },  // bottom-right
+    { x: margin,          y: margin },
+    { x: MW - margin - 2, y: margin },
+    { x: margin,          y: MH - margin - 2 },
+    { x: MW - margin - 2, y: MH - margin - 2 },
   ];
 
-  // Pick a random pair of diagonally opposite corners using the seeded RNG.
-  // Opposite pairs: (0,3) = TL/BR,  (1,2) = TR/BL
-  const pair = (rng() < 0.5) ? [0, 3] : [1, 2];
-  // Randomly flip which player gets which corner of the pair
-  const flip = rng() < 0.5;
-  const c0 = corners[flip ? pair[1] : pair[0]];
-  const c1 = corners[flip ? pair[0] : pair[1]];
+  // Fisher-Yates shuffle with seeded RNG, then take first two
+  for (let i = corners.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [corners[i], corners[j]] = [corners[j], corners[i]];
+  }
+  const c0 = corners[0], c1 = corners[1];
 
   const b0x = c0.x * TS, b0y = c0.y * TS;
   const b1x = c1.x * TS, b1y = c1.y * TS;
