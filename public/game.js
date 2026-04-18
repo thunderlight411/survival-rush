@@ -351,6 +351,9 @@ let fxExplosions = [];
 const keysDown = {};
 let   mouseScreen = { x: 0, y: 0 };
 let   mouseWorld  = { x: 0, y: 0 };
+let touchStartScreen = null;
+let touchLastScreen = null;
+let touchMoved = false;
 
 // Message display
 let gameMsg  = '';
@@ -1813,6 +1816,10 @@ function initInput() {
   canvas.addEventListener('mousemove',    onMouseMove);
   canvas.addEventListener('mouseup',      onMouseUp);
   canvas.addEventListener('contextmenu',  onRightClick);
+  canvas.addEventListener('touchstart',   onTouchStart, { passive: false });
+  canvas.addEventListener('touchmove',    onTouchMove, { passive: false });
+  canvas.addEventListener('touchend',     onTouchEnd, { passive: false });
+  canvas.addEventListener('touchcancel',  onTouchCancel, { passive: false });
   document.addEventListener('keydown',    e => {
     keysDown[e.key] = true;
       if (e.key === 'Escape') { buildMode = null; wallStartTile = null; strikeMode = false; sel.clear(); }
@@ -1932,7 +1939,7 @@ function onMouseUp(e) {
   const dx = Math.abs(sx - selStart.sx), dy = Math.abs(sy - selStart.sy);
 
   if (dx < 5 && dy < 5) {
-    clickSelect(mouseWorld.x, mouseWorld.y, e.shiftKey);
+    clickSelect(mouseWorld.x, mouseWorld.y, e.shiftKey, false);
   } else {
     boxSelect(selBox);
   }
@@ -1941,9 +1948,12 @@ function onMouseUp(e) {
   selBox   = null;
 }
 
-function clickSelect(wx, wy, shift) {
-  if (!shift) sel.clear();
+function clickSelect(wx, wy, shift, allowTapCommand = false) {
   const clicked = entityAt(wx, wy);
+  const myUnits = [...sel].filter(id => ents[id] && DEF[ents[id].type].u && ents[id].player === myP);
+
+  if (!shift && clicked && clicked.player === myP) sel.clear();
+
   if (clicked) {
     if (clicked.player === myP) {
       sel.has(clicked.id) ? sel.delete(clicked.id) : sel.add(clicked.id);
@@ -1951,6 +1961,11 @@ function clickSelect(wx, wy, shift) {
       // Click on enemy → attack with selected units
       issueAttack(clicked.id);
     }
+  } else if (allowTapCommand && myUnits.length > 0) {
+    // Mobile: tap ground with selected units to move
+    sendCmd({ type: 'MOVE', ids: myUnits, wx, wy });
+  } else if (!shift) {
+    sel.clear();
   }
 }
 
@@ -2002,6 +2017,69 @@ function onRightClick(e) {
   } else {
     sendCmd({ type: 'MOVE', ids: myUnits, wx: w.x, wy: w.y });
   }
+}
+
+function onTouchStart(e) {
+  if (!e.touches || e.touches.length !== 1) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  touchStartScreen = { x: t.clientX, y: t.clientY };
+  touchLastScreen = { x: t.clientX, y: t.clientY };
+  touchMoved = false;
+
+  onMouseDown({ button: 0, clientX: t.clientX, clientY: t.clientY });
+}
+
+function onTouchMove(e) {
+  if (!e.touches || e.touches.length !== 1 || !touchStartScreen) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  touchLastScreen = { x: t.clientX, y: t.clientY };
+  if (Math.abs(t.clientX - touchStartScreen.x) > 6 || Math.abs(t.clientY - touchStartScreen.y) > 6) {
+    touchMoved = true;
+  }
+  onMouseMove({ clientX: t.clientX, clientY: t.clientY });
+}
+
+function onTouchEnd(e) {
+  if (!touchStartScreen) return;
+  e.preventDefault();
+
+  const p = touchLastScreen || touchStartScreen;
+  const r = canvas.getBoundingClientRect();
+  const sx = p.x - r.left;
+  const sy = p.y - r.top;
+  const w = screenToWorld(sx, sy);
+
+  if (!selStart) {
+    touchStartScreen = null;
+    touchLastScreen = null;
+    touchMoved = false;
+    return;
+  }
+
+  if (touchMoved && selBox && (selBox.w > 4 || selBox.h > 4)) {
+    boxSelect(selBox);
+    selStart = null;
+    selBox = null;
+  } else {
+    clickSelect(w.x, w.y, false, true);
+    selStart = null;
+    selBox = null;
+  }
+
+  touchStartScreen = null;
+  touchLastScreen = null;
+  touchMoved = false;
+}
+
+function onTouchCancel(e) {
+  if (e) e.preventDefault();
+  touchStartScreen = null;
+  touchLastScreen = null;
+  touchMoved = false;
+  selStart = null;
+  selBox = null;
 }
 
 // ── Canvas resize ──────────────────────────────────────────

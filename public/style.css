@@ -213,6 +213,7 @@ body {
   width: 100%;
   display: block;
   cursor: crosshair;
+  touch-action: none;
 }
 
 /* Unit legend sidebar */
@@ -234,6 +235,71 @@ body {
     width: 150px;
     min-width: 150px;
     flex-basis: 150px;
+  }
+}
+
+@media (max-width: 820px) {
+  #hud-top {
+    height: auto;
+    min-height: 52px;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    padding: 6px 10px;
+  }
+
+  .hud-side { font-size: 0.84rem; }
+  #hud-center { width: 100%; font-size: 0.9rem; text-align: center; order: 3; }
+
+  #game-area {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  #unit-legend {
+    width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
+    border-left: none;
+    border-top: 1px solid #2a2a44;
+    padding: 6px 8px;
+    max-height: 122px;
+  }
+
+  #legend-rows {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 8px;
+  }
+
+  #bottom-top {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  #sel-info {
+    width: 100%;
+  }
+
+  #action-btns,
+  #eco-btns {
+    gap: 6px;
+  }
+
+  .action-btn,
+  .lobby-btn {
+    min-height: 40px;
+    font-size: 0.86rem;
+    padding: 8px 10px;
+  }
+
+  #minimap {
+    width: 120px;
+    height: 56px;
+  }
+
+  #bottom-panel {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 
